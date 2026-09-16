@@ -151,7 +151,9 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
     print("📡 CARD SCANNING MODE")
     print("=" * 60)
     print("To detect your cards:")
-    print("  👉 Open the Wallet app on your iPhone and tap the card.")
+    print("  👉 1) Double-click Side (Power) button to open Apple Pay.")
+    print("  👉 2) Authenticate with Face ID.")
+    print("  👉 3) Tap your card to trigger instant detection!")
     print("Press ENTER when finished.")
     print("=" * 60 + "\n")
 

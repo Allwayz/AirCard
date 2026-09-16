@@ -329,7 +329,7 @@ class AppViewModel: ObservableObject {
     func startCardScanning() {
         guard !isScanningCards else { return }
         isScanningCards = true
-        statusText = "Open Wallet on your iPhone and tap your card..."
+        statusText = "Double-click Side button, pass Face ID, then tap your card..."
         log("Started scanning device logs for cards...")
         
         let pipe = Pipe()
@@ -949,7 +949,7 @@ struct ContentView: View {
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundColor(.blue)
-                Text("Open the Wallet app on your iPhone and tap your card to scan it.")
+                Text("Double-click Side button (Apple Pay), pass Face ID, then tap your card.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -988,7 +988,7 @@ struct ContentView: View {
                     Text("2.")
                         .fontWeight(.bold)
                         .foregroundColor(.accentColor)
-                    Text("On your iPhone, open the **Wallet** app and **tap your card**.")
+                    Text("On your iPhone, **double-click the Side button** (Apple Pay), authenticate with **Face ID**, and **tap your card**.")
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Text("3.")

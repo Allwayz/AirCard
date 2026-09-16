@@ -45,8 +45,11 @@ python3 aircard.py
 ## How to Detect Cards
 1. Connect your iPhone to your Mac via USB cable and ensure it is unlocked and trusted.
 2. In AirCard, click **Scan Cards**.
-3. On your iPhone, open the **Wallet** app and **tap your card**.
-4. The card is detected instantly and appears in your cards list.
+3. On your iPhone:
+   - **Double-click the Side (Power) button** to open Apple Pay.
+   - Authenticate with **Face ID**.
+   - **Tap your card** (or tap it once more) to trigger instant detection!
+4. The card will appear in AirCard immediately and is ready for custom skins.
 
 ---
 
