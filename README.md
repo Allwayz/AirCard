@@ -30,15 +30,6 @@
 >   sudo xattr -cr /Applications/AirCard.app
 >   ```
 
----
-
-### Linux / Debian / Ubuntu (CLI only)
-```sh
-sudo apt update
-sudo apt install -y libimobiledevice-utils libimobiledevice6
-pip3 install pillow
-python3 aircard.py
-```
 
 ---
 
