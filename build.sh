@@ -85,7 +85,9 @@ swiftc -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift -o 
 lipo -create -output "${MACOS_DIR}/AirCard" build/AirCard_arm64 build/AirCard_x86_64
 chmod +x "${MACOS_DIR}/AirCard"
 
-echo "==> [5/6] Signing ${APP_NAME}.app bundle..."
+echo "==> [5/6] Setting permissions and signing ${APP_NAME}.app bundle..."
+chmod -R 755 "$APP_DIR"
+xattr -cr "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "==> [6/6] Generating styled DMG (${APP_NAME}.dmg)..."

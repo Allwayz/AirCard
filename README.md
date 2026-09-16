@@ -22,10 +22,13 @@
 3. Fully compatible with both **Apple Silicon** and **Intel (x86)** Macs.
 
 > [!NOTE]
-> **First Launch on macOS:**
+> **First Launch on macOS (Gatekeeper):**
 > If macOS displays an unidentified developer prompt on first launch:
-> - Right-click `AirCard.app` in Applications ➔ click **Open** ➔ click **Open**.
-> - Or run in Terminal: `xattr -cr /Applications/AirCard.app`
+> - **Method 1 (UI):** Right-click (or Control-click) `AirCard.app` in Applications ➔ click **Open** ➔ click **Open**.
+> - **Method 2 (Terminal):**
+>   ```sh
+>   sudo xattr -cr /Applications/AirCard.app
+>   ```
 
 ---
 
