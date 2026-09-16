@@ -63,7 +63,9 @@ This builds universal binaries (`arm64` + `x86_64`), bundles dependencies into `
 
 ---
 
+## Contributors
+- **[@mak5er](https://github.com/mak5er)** (Developer) — [GitHub](https://github.com/mak5er) · [Twitter / X](https://x.com/mak5er)
+- **[@Lumid-Off](https://github.com/Lumid-Off)** (Contributor & Developer) — [GitHub](https://github.com/Lumid-Off) · [Twitter / X](https://x.com/LumidOff)
+
 ## Credits
-- **@mak5er** (Developer) — [GitHub](https://github.com/mak5er) · [Twitter / X](https://x.com/mak5er)
-- **@Lumid-Off** (Developer) — [GitHub](https://github.com/Lumid-Off) · [Twitter / X](https://x.com/LumidOff)
 - Core exploit based on `airlift` (AirTraffic sync escape).
