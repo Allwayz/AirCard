@@ -65,11 +65,13 @@ struct KeypadButtonGeometry: Identifiable {
 
 struct KeypadLayout {
     static let buttonDiameter: CGFloat = 75.0
+    static let colWidth: CGFloat = 101.67 // 305.0 / 3
+    static let rowHeight: CGFloat = 95.67 // 287.0 / 3
     static let horizontalSpacing: CGFloat = 24.0
     static let verticalSpacing: CGFloat = 18.0
     
-    static let gridWidth: CGFloat = 3 * buttonDiameter + 2 * horizontalSpacing // 273.0
-    static let gridHeight: CGFloat = 4 * buttonDiameter + 3 * verticalSpacing // 354.0
+    static let gridWidth: CGFloat = 305.0 // 915.0 / 3
+    static let gridHeight: CGFloat = 382.67 // 1148.0 / 3
     
     static let allButtons: [KeypadButtonGeometry] = [
         KeypadButtonGeometry(digit: "1", letters: "", row: 0, col: 0),
@@ -97,10 +99,10 @@ struct KeypadLayout {
         "9": "W X Y Z"
     ]
     
-    static func frame(for button: KeypadButtonGeometry) -> CGRect {
-        let x = CGFloat(button.col) * (buttonDiameter + horizontalSpacing)
-        let y = CGFloat(button.row) * (buttonDiameter + verticalSpacing)
-        return CGRect(x: x, y: y, width: buttonDiameter, height: buttonDiameter)
+    static func cellFrame(for button: KeypadButtonGeometry) -> CGRect {
+        let x = CGFloat(button.col) * colWidth
+        let y = CGFloat(button.row) * rowHeight
+        return CGRect(x: x, y: y, width: colWidth, height: rowHeight)
     }
 }
 
@@ -136,55 +138,71 @@ class KeypadSlicer {
         return rep.cgImage
     }
     
-    static func slicePoster(image: NSImage, zoom: Double = 1.0, offset: CGPoint = .zero) -> [String: NSImage] {
+    static func slicePoster(
+        image: NSImage,
+        zoom: Double = 1.0,
+        offset: CGPoint = .zero,
+        maskToCircles: Bool = false
+    ) -> [String: NSImage] {
         guard let cgImg = cgImage(from: image) else { return [:] }
         let imgW = CGFloat(cgImg.width)
         let imgH = CGFloat(cgImg.height)
         guard imgW > 0 && imgH > 0 else { return [:] }
         
-        let baseScale = max(KeypadLayout.gridWidth / imgW, KeypadLayout.gridHeight / imgH)
+        // Standard iOS TelephonyUI @3x grid dimensions
+        let gridW: CGFloat = 915.0
+        let gridH: CGFloat = 1148.0
+        let colW: CGFloat = 305.0
+        let rowH: CGFloat = 287.0
+        
+        let baseScale = max(gridW / imgW, gridH / imgH)
         let scale = baseScale * CGFloat(max(0.1, zoom))
         let scaledW = imgW * scale
         let scaledH = imgH * scale
         
-        let imageX = (KeypadLayout.gridWidth - scaledW) / 2.0 + offset.x
-        let imageY = (KeypadLayout.gridHeight - scaledH) / 2.0 + offset.y
+        // Match user's pan offset in SwiftUI points (scaled to 3x)
+        let imageX = (gridW - scaledW) / 2.0 + offset.x * 3.0
+        let imageY = (gridH - scaledH) / 2.0 + offset.y * 3.0
         
-        let targetPx: CGFloat = 300.0
-        let ptToPx: CGFloat = targetPx / KeypadLayout.buttonDiameter
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        
         var results: [String: NSImage] = [:]
         
         for button in KeypadLayout.allButtons {
-            let buttonRect = KeypadLayout.frame(for: button)
-            let relX = imageX - buttonRect.minX
-            let relY = imageY - buttonRect.minY
+            let isZeroSeamless = (!maskToCircles && button.digit == "0")
+            let tileW: CGFloat = isZeroSeamless ? gridW : colW
+            let tileH: CGFloat = rowH
             
-            let destTopDownX = relX * ptToPx
-            let destTopDownY = relY * ptToPx
-            let destW = scaledW * ptToPx
-            let destH = scaledH * ptToPx
-            let destCGY = targetPx - destTopDownY - destH
+            let cellX: CGFloat = isZeroSeamless ? 0.0 : CGFloat(button.col) * colW
+            let cellY: CGFloat = CGFloat(button.row) * rowH
+            
+            let relX = imageX - cellX
+            let relY = imageY - cellY
+            let destCGY = tileH - relY - scaledH
             
             guard let ctx = CGContext(
                 data: nil,
-                width: Int(targetPx),
-                height: Int(targetPx),
+                width: Int(tileW),
+                height: Int(tileH),
                 bitsPerComponent: 8,
-                bytesPerRow: Int(targetPx) * 4,
+                bytesPerRow: Int(tileW) * 4,
                 space: colorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else { continue }
             
-            ctx.clear(CGRect(x: 0, y: 0, width: targetPx, height: targetPx))
-            ctx.addEllipse(in: CGRect(x: 0, y: 0, width: targetPx, height: targetPx))
-            ctx.clip()
+            ctx.clear(CGRect(x: 0, y: 0, width: tileW, height: tileH))
             
-            ctx.draw(cgImg, in: CGRect(x: destTopDownX, y: destCGY, width: destW, height: destH))
+            if maskToCircles {
+                let circleDiameter: CGFloat = 225.0
+                let circleX = (tileW - circleDiameter) / 2.0
+                let circleY = (tileH - circleDiameter) / 2.0
+                ctx.addEllipse(in: CGRect(x: circleX, y: circleY, width: circleDiameter, height: circleDiameter))
+                ctx.clip()
+            }
+            
+            ctx.draw(cgImg, in: CGRect(x: relX, y: destCGY, width: scaledW, height: scaledH))
             
             if let outCG = ctx.makeImage() {
-                results[button.digit] = NSImage(cgImage: outCG, size: NSSize(width: targetPx, height: targetPx))
+                results[button.digit] = NSImage(cgImage: outCG, size: NSSize(width: tileW, height: tileH))
             }
         }
         return results
@@ -338,6 +356,7 @@ class AppViewModel: ObservableObject {
     @Published var creatorPosterImage: NSImage? = nil
     @Published var creatorPosterZoom: Double = 1.0
     @Published var creatorPosterOffset: CGPoint = .zero
+    @Published var creatorMaskToCircles: Bool = false
     @Published var creatorCustomKeys: [String: NSImage] = [:]
     @Published var creatorSlicedKeys: [String: NSImage] = [:]
     
@@ -1028,7 +1047,12 @@ class AppViewModel: ObservableObject {
             creatorSlicedKeys = [:]
             return
         }
-        creatorSlicedKeys = KeypadSlicer.slicePoster(image: img, zoom: creatorPosterZoom, offset: creatorPosterOffset)
+        creatorSlicedKeys = KeypadSlicer.slicePoster(
+            image: img,
+            zoom: creatorPosterZoom,
+            offset: creatorPosterOffset,
+            maskToCircles: creatorMaskToCircles
+        )
     }
     
     func setPosterImage(_ img: NSImage) {
@@ -2021,7 +2045,7 @@ struct ContentView: View {
                 }
             } else {
                 // Controls Bar when poster is loaded
-                HStack(spacing: 16) {
+                HStack(spacing: 14) {
                     Button("Change Poster...") {
                         openPosterPicker()
                     }
@@ -2041,8 +2065,19 @@ struct ContentView: View {
                     
                     Spacer()
                     
+                    // Style Picker: Seamless vs Circle Buttons
+                    Picker("Style", selection: $vm.creatorMaskToCircles) {
+                        Text("Seamless Poster").tag(false)
+                        Text("Circle Buttons").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 210)
+                    .onChange(of: vm.creatorMaskToCircles) { _, _ in
+                        vm.updatePosterSlicing()
+                    }
+                    
                     // Zoom slider
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Image(systemName: "minus.magnifyingglass")
                             .foregroundColor(.secondary)
                             .font(.caption)
@@ -2050,7 +2085,7 @@ struct ContentView: View {
                         Slider(value: $vm.creatorPosterZoom, in: 0.5...3.0, step: 0.05) {
                             Text("Zoom")
                         }
-                        .frame(width: 140)
+                        .frame(width: 110)
                         .onChange(of: vm.creatorPosterZoom) { _, _ in
                             vm.updatePosterSlicing()
                         }
@@ -2060,8 +2095,8 @@ struct ContentView: View {
                             .font(.caption)
                         
                         Text(String(format: "%.1fx", vm.creatorPosterZoom))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .frame(width: 38, alignment: .trailing)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .frame(width: 32, alignment: .trailing)
                     }
                     
                     Button(action: {
@@ -2078,7 +2113,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 24)
                 
-                // Interactive 3x4 Dialer Preview
+                // Interactive Lock Screen Dialer Preview
                 VStack(spacing: 10) {
                     HStack {
                         Text("Live Lock Screen Dialer Preview")
@@ -2088,7 +2123,7 @@ struct ContentView: View {
                         
                         Spacer()
                         
-                        Text("Drag anywhere on the dialer to reposition the wallpaper")
+                        Text("Drag anywhere on the dialer to reposition the image")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -2118,67 +2153,100 @@ struct ContentView: View {
             [("", ""), ("0", "+"), ("", "")]
         ]
         
-        return VStack(spacing: 14) {
-            // Lock Screen Header
-            VStack(spacing: 6) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
-                
-                Text("Enter Passcode")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.white.opacity(0.9))
-                
-                // Passcode Dots
-                HStack(spacing: 12) {
-                    ForEach(0..<4, id: \.self) { _ in
-                        Circle()
-                            .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
-                            .frame(width: 10, height: 10)
-                    }
+        let containerW: CGFloat = KeypadLayout.gridWidth + 36
+        let containerH: CGFloat = KeypadLayout.gridHeight + 170
+        
+        return ZStack {
+            // Background Wallpaper / Image (Seamless Character / Poster)
+            if let poster = vm.creatorPosterImage {
+                GeometryReader { geo in
+                    let baseScale = max(geo.size.width / poster.size.width, geo.size.height / poster.size.height)
+                    let scale = baseScale * CGFloat(vm.creatorPosterZoom)
+                    let scaledW = poster.size.width * scale
+                    let scaledH = poster.size.height * scale
+                    Image(nsImage: poster)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: scaledW, height: scaledH)
+                        .position(
+                            x: geo.size.width / 2.0 + vm.creatorPosterOffset.x,
+                            y: geo.size.height / 2.0 + vm.creatorPosterOffset.y
+                        )
                 }
-                .padding(.top, 2)
+                .clipped()
+            } else {
+                Color.black.opacity(0.9)
             }
-            .padding(.top, 14)
             
-            // 3x4 Grid
-            VStack(spacing: KeypadLayout.verticalSpacing) {
-                ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
-                    HStack(spacing: KeypadLayout.horizontalSpacing) {
-                        ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
-                            let item = keysLayout[rowIdx][colIdx]
-                            if item.digit.isEmpty {
-                                Color.clear
-                                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                            } else {
-                                posterLiveKeyView(digit: item.digit, letters: item.letters)
+            // Subtle frosted overlay to ensure key typography readability
+            Color.black.opacity(0.2)
+            
+            // Lock Screen UI Overlay
+            VStack(spacing: 0) {
+                // Lock Screen Header
+                VStack(spacing: 6) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white.opacity(0.95))
+                    
+                    Text("Enter Passcode")
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundColor(.white.opacity(0.95))
+                    
+                    // Passcode 6-Dot Indicator
+                    HStack(spacing: 12) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            Circle()
+                                .stroke(Color.white.opacity(0.75), lineWidth: 1.5)
+                                .frame(width: 10, height: 10)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(.top, 18)
+                
+                Spacer()
+                
+                // 3x4 Authentic Keypad Grid
+                VStack(spacing: KeypadLayout.rowHeight - KeypadLayout.buttonDiameter) {
+                    ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
+                        HStack(spacing: KeypadLayout.colWidth - KeypadLayout.buttonDiameter) {
+                            ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
+                                let item = keysLayout[rowIdx][colIdx]
+                                if item.digit.isEmpty {
+                                    Color.clear
+                                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                                } else {
+                                    posterLiveKeyView(digit: item.digit, letters: item.letters)
+                                }
                             }
                         }
                     }
                 }
-            }
-            
-            // Lock Screen Footer
-            HStack {
-                Text("Emergency")
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.white.opacity(0.8))
+                
                 Spacer()
+                
+                // Lock Screen Footer Actions
+                HStack {
+                    Text("Emergency")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.white.opacity(0.9))
+                    Spacer()
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 16)
             }
-            .padding(.horizontal, 28)
-            .padding(.bottom, 12)
         }
-        .padding(.vertical, 8)
-        .frame(width: 320)
-        .background(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(Color.black.opacity(0.85))
-        )
+        .frame(width: containerW, height: containerH)
+        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
         )
-        .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(0.45), radius: 20, x: 0, y: 10)
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
@@ -2198,24 +2266,24 @@ struct ContentView: View {
     }
     
     private func posterLiveKeyView(digit: String, letters: String) -> some View {
-        let slicedImg = vm.creatorSlicedKeys[digit]
-        
-        return ZStack {
-            if let img = slicedImg {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                    .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(Color.white.opacity(0.12))
-                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-            }
+        ZStack {
+            // Frosted translucent key circle
+            Circle()
+                .fill(Color.white.opacity(0.2))
+                .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
             
             Circle()
-                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                .stroke(Color.white.opacity(0.3), lineWidth: 1)
                 .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+            
+            // If user explicitly chose Circular Cutouts, show circle-masked preview
+            if vm.creatorMaskToCircles, let img = vm.creatorSlicedKeys[digit] {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    .clipShape(Circle())
+            }
             
             VStack(spacing: 1) {
                 Text(digit)
@@ -2225,7 +2293,7 @@ struct ContentView: View {
                     Text(letters)
                         .font(.system(size: 9, weight: .semibold))
                         .tracking(1)
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(.white.opacity(0.9))
                 }
             }
         }
@@ -2283,21 +2351,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 10)
                 
-                VStack(spacing: KeypadLayout.verticalSpacing) {
-                    ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
-                        HStack(spacing: KeypadLayout.horizontalSpacing) {
-                            ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
-                                let item = keysLayout[rowIdx][colIdx]
-                                if item.digit.isEmpty {
-                                    Color.clear
-                                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                                } else {
-                                    individualKeySlot(digit: item.digit, letters: item.letters)
-                                }
-                            }
-                        }
-                    }
-                }
+                individualKeysGrid(layout: keysLayout)
                 .padding(.vertical, 8)
             }
             .padding(20)
@@ -2310,6 +2364,28 @@ struct ContentView: View {
                     .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
             )
             .padding(.horizontal, 24)
+        }
+    }
+    
+    private func individualKeysGrid(layout: [[(digit: String, letters: String)]]) -> some View {
+        VStack(spacing: KeypadLayout.verticalSpacing) {
+            ForEach(0..<layout.count, id: \.self) { rowIdx in
+                individualKeyRow(rowItems: layout[rowIdx])
+            }
+        }
+    }
+    
+    private func individualKeyRow(rowItems: [(digit: String, letters: String)]) -> some View {
+        HStack(spacing: KeypadLayout.horizontalSpacing) {
+            ForEach(0..<rowItems.count, id: \.self) { colIdx in
+                let item = rowItems[colIdx]
+                if item.digit.isEmpty {
+                    Color.clear
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                } else {
+                    individualKeySlot(digit: item.digit, letters: item.letters)
+                }
+            }
         }
     }
     
