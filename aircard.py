@@ -44,7 +44,7 @@ TARGET_ASSETS = [
     "cardBackgroundCombined@2x.png",
 ]
 
-CACHE_FILES = ["FrontFace"]
+CACHE_FILES = ["FrontFace", "Preview"]
 
 CARDS_STORE_PATH = Path.home() / ".aircard_cards.json"
 LEGACY_STORE_PATH = Path.home() / ".lumicards_cards.json"

@@ -43,6 +43,286 @@ struct PasscodeThemeInfo: Identifiable {
     let keysPreview: [String: NSImage]
 }
 
+enum PasscodeTabMode: String, CaseIterable, Identifiable {
+    case applyTheme = "Apply .passthm"
+    case themeCreator = "Theme Creator"
+    var id: String { rawValue }
+}
+
+enum CreatorSubMode: String, CaseIterable, Identifiable {
+    case posterSlice = "Poster Slice (Puzzle)"
+    case individualKeys = "Individual Keys"
+    var id: String { rawValue }
+}
+
+struct KeypadButtonGeometry: Identifiable {
+    var id: String { digit }
+    let digit: String
+    let letters: String
+    let row: Int
+    let col: Int
+}
+
+struct KeypadLayout {
+    static let buttonDiameter: CGFloat = 75.0
+    static let horizontalSpacing: CGFloat = 24.0
+    static let verticalSpacing: CGFloat = 18.0
+    
+    static let gridWidth: CGFloat = 3 * buttonDiameter + 2 * horizontalSpacing // 273.0
+    static let gridHeight: CGFloat = 4 * buttonDiameter + 3 * verticalSpacing // 354.0
+    
+    static let allButtons: [KeypadButtonGeometry] = [
+        KeypadButtonGeometry(digit: "1", letters: "", row: 0, col: 0),
+        KeypadButtonGeometry(digit: "2", letters: "A B C", row: 0, col: 1),
+        KeypadButtonGeometry(digit: "3", letters: "D E F", row: 0, col: 2),
+        KeypadButtonGeometry(digit: "4", letters: "G H I", row: 1, col: 0),
+        KeypadButtonGeometry(digit: "5", letters: "J K L", row: 1, col: 1),
+        KeypadButtonGeometry(digit: "6", letters: "M N O", row: 1, col: 2),
+        KeypadButtonGeometry(digit: "7", letters: "P Q R S", row: 2, col: 0),
+        KeypadButtonGeometry(digit: "8", letters: "T U V", row: 2, col: 1),
+        KeypadButtonGeometry(digit: "9", letters: "W X Y Z", row: 2, col: 2),
+        KeypadButtonGeometry(digit: "0", letters: "+", row: 3, col: 1)
+    ]
+    
+    static let keypadSubtexts: [String: String] = [
+        "0": "+",
+        "1": "",
+        "2": "A B C",
+        "3": "D E F",
+        "4": "G H I",
+        "5": "J K L",
+        "6": "M N O",
+        "7": "P Q R S",
+        "8": "T U V",
+        "9": "W X Y Z"
+    ]
+    
+    static func frame(for button: KeypadButtonGeometry) -> CGRect {
+        let x = CGFloat(button.col) * (buttonDiameter + horizontalSpacing)
+        let y = CGFloat(button.row) * (buttonDiameter + verticalSpacing)
+        return CGRect(x: x, y: y, width: buttonDiameter, height: buttonDiameter)
+    }
+}
+
+// MARK: - Keypad Slicing Engine
+
+class KeypadSlicer {
+    static func cgImage(from image: NSImage) -> CGImage? {
+        var rect = CGRect(origin: .zero, size: image.size)
+        if let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
+            return cg
+        }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: max(1, Int(image.size.width)),
+            pixelsHigh: max(1, Int(image.size.height)),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+        
+        NSGraphicsContext.saveGraphicsState()
+        guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else {
+            NSGraphicsContext.restoreGraphicsState()
+            return nil
+        }
+        NSGraphicsContext.current = ctx
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.cgImage
+    }
+    
+    static func slicePoster(image: NSImage, zoom: Double = 1.0, offset: CGPoint = .zero) -> [String: NSImage] {
+        guard let cgImg = cgImage(from: image) else { return [:] }
+        let imgW = CGFloat(cgImg.width)
+        let imgH = CGFloat(cgImg.height)
+        guard imgW > 0 && imgH > 0 else { return [:] }
+        
+        let baseScale = max(KeypadLayout.gridWidth / imgW, KeypadLayout.gridHeight / imgH)
+        let scale = baseScale * CGFloat(max(0.1, zoom))
+        let scaledW = imgW * scale
+        let scaledH = imgH * scale
+        
+        let imageX = (KeypadLayout.gridWidth - scaledW) / 2.0 + offset.x
+        let imageY = (KeypadLayout.gridHeight - scaledH) / 2.0 + offset.y
+        
+        let targetPx: CGFloat = 300.0
+        let ptToPx: CGFloat = targetPx / KeypadLayout.buttonDiameter
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        
+        var results: [String: NSImage] = [:]
+        
+        for button in KeypadLayout.allButtons {
+            let buttonRect = KeypadLayout.frame(for: button)
+            let relX = imageX - buttonRect.minX
+            let relY = imageY - buttonRect.minY
+            
+            let destTopDownX = relX * ptToPx
+            let destTopDownY = relY * ptToPx
+            let destW = scaledW * ptToPx
+            let destH = scaledH * ptToPx
+            let destCGY = targetPx - destTopDownY - destH
+            
+            guard let ctx = CGContext(
+                data: nil,
+                width: Int(targetPx),
+                height: Int(targetPx),
+                bitsPerComponent: 8,
+                bytesPerRow: Int(targetPx) * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { continue }
+            
+            ctx.clear(CGRect(x: 0, y: 0, width: targetPx, height: targetPx))
+            ctx.addEllipse(in: CGRect(x: 0, y: 0, width: targetPx, height: targetPx))
+            ctx.clip()
+            
+            ctx.draw(cgImg, in: CGRect(x: destTopDownX, y: destCGY, width: destW, height: destH))
+            
+            if let outCG = ctx.makeImage() {
+                results[button.digit] = NSImage(cgImage: outCG, size: NSSize(width: targetPx, height: targetPx))
+            }
+        }
+        return results
+    }
+    
+    static func cropToCircle(image: NSImage, targetSize: CGSize = CGSize(width: 300, height: 300)) -> NSImage? {
+        guard let cgImg = cgImage(from: image) else { return nil }
+        let imgW = CGFloat(cgImg.width)
+        let imgH = CGFloat(cgImg.height)
+        guard imgW > 0 && imgH > 0 else { return nil }
+        
+        let baseScale = max(targetSize.width / imgW, targetSize.height / imgH)
+        let scaledW = imgW * baseScale
+        let scaledH = imgH * baseScale
+        let destX = (targetSize.width - scaledW) / 2.0
+        let destY = (targetSize.height - scaledH) / 2.0
+        let destCGY = targetSize.height - destY - scaledH
+        
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: Int(targetSize.width),
+            height: Int(targetSize.height),
+            bitsPerComponent: 8,
+            bytesPerRow: Int(targetSize.width) * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        
+        ctx.clear(CGRect(origin: .zero, size: targetSize))
+        ctx.addEllipse(in: CGRect(origin: .zero, size: targetSize))
+        ctx.clip()
+        ctx.draw(cgImg, in: CGRect(x: destX, y: destCGY, width: scaledW, height: scaledH))
+        
+        guard let outCG = ctx.makeImage() else { return nil }
+        return NSImage(cgImage: outCG, size: targetSize)
+    }
+}
+
+// MARK: - Passcode Theme Exporter
+
+class PasscodeThemeExporter {
+    static func pngData(from image: NSImage) -> Data? {
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return png
+        }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: max(1, Int(image.size.width)),
+            pixelsHigh: max(1, Int(image.size.height)),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+        
+        NSGraphicsContext.saveGraphicsState()
+        guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else {
+            NSGraphicsContext.restoreGraphicsState()
+            return nil
+        }
+        NSGraphicsContext.current = ctx
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])
+    }
+    
+    static func exportTheme(keys: [String: NSImage], targetURL: URL) throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("passthm_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        
+        for ver in ["TelephonyUI-10", "TelephonyUI-9"] {
+            let verDir = tempDir.appendingPathComponent(ver)
+            try FileManager.default.createDirectory(at: verDir, withIntermediateDirectories: true)
+            
+            let markerFile = verDir.appendingPathComponent("_big")
+            FileManager.default.createFile(atPath: markerFile.path, contents: Data())
+            
+            for (digit, image) in keys {
+                guard let pngData = pngData(from: image) else { continue }
+                let subtext = KeypadLayout.keypadSubtexts[digit] ?? ""
+                
+                var filenames = [
+                    "en-\(digit)---white.png",
+                    "other-\(digit)---white.png"
+                ]
+                if !subtext.isEmpty {
+                    filenames.append("en-\(digit)-\(subtext)--white.png")
+                    filenames.append("other-\(digit)-\(subtext)--white.png")
+                }
+                
+                for fn in filenames {
+                    let fileURL = verDir.appendingPathComponent(fn)
+                    try pngData.write(to: fileURL)
+                }
+            }
+        }
+        
+        if FileManager.default.fileExists(atPath: targetURL.path) {
+            try FileManager.default.removeItem(at: targetURL)
+        }
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.currentDirectoryURL = tempDir
+        process.arguments = ["-r", "-q", targetURL.path, "TelephonyUI-10", "TelephonyUI-9"]
+        try process.run()
+        process.waitUntilExit()
+        
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "PasscodeThemeExporter",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "Failed to create .passthm zip archive (exit code \(process.terminationStatus))"]
+            )
+        }
+    }
+    
+    static func stageTemporaryTheme(keys: [String: NSImage]) -> URL? {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("AirCard_Custom_\(UUID().uuidString).passthm")
+        do {
+            try exportTheme(keys: keys, targetURL: tempURL)
+            return tempURL
+        } catch {
+            print("Failed to stage temporary theme: \(error)")
+            return nil
+        }
+    }
+}
+
 // MARK: - View Model
 
 @MainActor
@@ -51,6 +331,15 @@ class AppViewModel: ObservableObject {
     @Published var loadedPasscodeTheme: PasscodeThemeInfo? = nil
     @Published var isInspectingTheme = false
     @Published var targetTelephonyVersion: String = "TelephonyUI-10"
+    
+    // Theme Creator Properties
+    @Published var passcodeTabMode: PasscodeTabMode = .applyTheme
+    @Published var creatorSubMode: CreatorSubMode = .posterSlice
+    @Published var creatorPosterImage: NSImage? = nil
+    @Published var creatorPosterZoom: Double = 1.0
+    @Published var creatorPosterOffset: CGPoint = .zero
+    @Published var creatorCustomKeys: [String: NSImage] = [:]
+    @Published var creatorSlicedKeys: [String: NSImage] = [:]
     
     @Published var device: DeviceInfo?
     @Published var isCheckingDevice = false
@@ -723,6 +1012,93 @@ class AppViewModel: ObservableObject {
             }
         }
     }
+    
+    // MARK: - Theme Creator Methods
+    
+    var effectiveCreatorKeys: [String: NSImage] {
+        if creatorSubMode == .posterSlice {
+            return creatorSlicedKeys
+        } else {
+            return creatorCustomKeys
+        }
+    }
+    
+    func updatePosterSlicing() {
+        guard let img = creatorPosterImage else {
+            creatorSlicedKeys = [:]
+            return
+        }
+        creatorSlicedKeys = KeypadSlicer.slicePoster(image: img, zoom: creatorPosterZoom, offset: creatorPosterOffset)
+    }
+    
+    func setPosterImage(_ img: NSImage) {
+        creatorPosterImage = img
+        creatorPosterZoom = 1.0
+        creatorPosterOffset = .zero
+        updatePosterSlicing()
+        statusText = "Poster image loaded · Ready to frame and slice"
+    }
+    
+    func setIndividualKey(digit: String, image: NSImage) {
+        if let cropped = KeypadSlicer.cropToCircle(image: image) {
+            creatorCustomKeys[digit] = cropped
+            statusText = "Updated key \(digit)"
+        }
+    }
+    
+    func clearIndividualKey(digit: String) {
+        creatorCustomKeys.removeValue(forKey: digit)
+        statusText = "Cleared key \(digit)"
+    }
+    
+    func adoptPosterSlicesToIndividualKeys() {
+        if creatorCustomKeys.isEmpty && !creatorSlicedKeys.isEmpty {
+            creatorCustomKeys = creatorSlicedKeys
+        } else {
+            for (k, v) in creatorSlicedKeys {
+                if creatorCustomKeys[k] == nil {
+                    creatorCustomKeys[k] = v
+                }
+            }
+        }
+        statusText = "Adopted poster slices to individual keys"
+    }
+    
+    func clearCreator() {
+        creatorPosterImage = nil
+        creatorPosterZoom = 1.0
+        creatorPosterOffset = .zero
+        creatorCustomKeys = [:]
+        creatorSlicedKeys = [:]
+        statusText = "Theme Creator reset"
+    }
+    
+    func flashCreatedTheme() {
+        let keys = effectiveCreatorKeys
+        guard !keys.isEmpty else {
+            errorMessage = "Please add at least one key icon or import a poster image first."
+            return
+        }
+        guard let dev = device, dev.connected, dev.udid != nil else {
+            errorMessage = "Please connect and trust your iPhone first."
+            return
+        }
+        
+        guard let stagedURL = PasscodeThemeExporter.stageTemporaryTheme(keys: keys) else {
+            errorMessage = "Failed to package theme for flashing."
+            return
+        }
+        
+        let themeInfo = PasscodeThemeInfo(
+            name: "Created Theme",
+            filePath: stagedURL.path,
+            detectedVersion: targetTelephonyVersion,
+            fileCount: keys.count * 4,
+            keysPreview: keys
+        )
+        self.loadedPasscodeTheme = themeInfo
+        self.flashPasscodeTheme()
+    }
 }
 
 // MARK: - Card View Component (Apple Wallet Style)
@@ -938,6 +1314,8 @@ struct WalletCardView: View {
 struct ContentView: View {
     @StateObject private var vm = AppViewModel()
     @State private var showCredits = false
+    @State private var dragOffsetStart: CGPoint = .zero
+    @State private var isTargetedPoster = false
     
     private var readyToFlashCount: Int {
         vm.cards.filter { $0.isSelected && $0.customImageURL != nil }.count
@@ -1271,24 +1649,58 @@ struct ContentView: View {
     
     private var passcodeToolbarView: some View {
         HStack(spacing: 12) {
-            Button(action: { openPasscodeThemePicker() }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.badge.plus")
-                    Text("Choose .passthm File")
-                        .fontWeight(.semibold)
+            // Mode Switcher: [Apply .passthm] | [Theme Creator]
+            Picker("", selection: $vm.passcodeTabMode) {
+                ForEach(PasscodeTabMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.accentColor)
+            .pickerStyle(.segmented)
+            .frame(width: 250)
             
-            if vm.loadedPasscodeTheme != nil {
-                Button(action: { vm.loadedPasscodeTheme = nil }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "trash")
-                        Text("Clear Theme")
+            Divider()
+                .frame(height: 18)
+            
+            if vm.passcodeTabMode == .applyTheme {
+                Button(action: { openPasscodeThemePicker() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.badge.plus")
+                        Text("Choose .passthm File")
+                            .fontWeight(.semibold)
                     }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.accentColor)
+                
+                if vm.loadedPasscodeTheme != nil {
+                    Button(action: { vm.loadedPasscodeTheme = nil }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                            Text("Clear Theme")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else {
+                // Theme Creator Sub-Mode Picker
+                Picker("", selection: $vm.creatorSubMode) {
+                    ForEach(CreatorSubMode.allCases) { subMode in
+                        Text(subMode.rawValue).tag(subMode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 300)
+                
+                if vm.creatorSubMode == .posterSlice && vm.creatorPosterImage != nil {
+                    Button(action: { openPosterPicker() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "photo")
+                            Text("Change Poster...")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
             
             Spacer()
@@ -1309,6 +1721,18 @@ struct ContentView: View {
     }
     
     private var passcodeThemeWorkspaceView: some View {
+        Group {
+            if vm.passcodeTabMode == .applyTheme {
+                passcodeApplyThemeWorkspaceView
+            } else {
+                passcodeThemeCreatorWorkspaceView
+            }
+        }
+    }
+    
+    // MARK: - Apply Theme Mode
+    
+    private var passcodeApplyThemeWorkspaceView: some View {
         ScrollView {
             VStack(spacing: 20) {
                 // Loaded Theme Banner or Drop Target
@@ -1416,27 +1840,7 @@ struct ContentView: View {
                 )
                 .padding(.horizontal, 24)
                 
-                // Important Warning Box
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                        .font(.title3)
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Important Requirement: Turn OFF Bold Text")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                        Text("On your iPhone, navigate to **Settings ➔ Display & Brightness** and ensure **Bold Text is turned OFF**. Otherwise, iOS overrides cached keypad graphics with standard vector fonts.")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.orange.opacity(0.1)))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.orange.opacity(0.3), lineWidth: 1))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
+                boldTextWarningBox
             }
             .padding(.top, 16)
         }
@@ -1516,6 +1920,501 @@ struct ContentView: View {
         .shadow(color: Color.black.opacity(0.08), radius: 2, x: 0, y: 1)
     }
     
+    // MARK: - Theme Creator Mode
+    
+    private var passcodeThemeCreatorWorkspaceView: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Header Bar for Creator
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(vm.creatorSubMode == .posterSlice ? "Poster Slice Mode" : "Individual Keys Mode")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Text(vm.creatorSubMode == .posterSlice
+                             ? "Position and slice a wallpaper across the iOS lock screen dialer grid"
+                             : "Customize each digit key individually with custom icons or images")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Clear All") {
+                        vm.clearCreator()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(vm.effectiveCreatorKeys.isEmpty && vm.creatorPosterImage == nil)
+                    
+                    Button(action: { openSavePasscodeThemePanel() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.arrow.up")
+                            Text("Export .passthm...")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(vm.effectiveCreatorKeys.isEmpty)
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                )
+                .padding(.horizontal, 24)
+                
+                if vm.creatorSubMode == .posterSlice {
+                    posterSliceView
+                } else {
+                    individualKeysView
+                }
+                
+                boldTextWarningBox
+            }
+            .padding(.top, 16)
+        }
+    }
+    
+    // MARK: - Poster Slice Mode View
+    
+    private var posterSliceView: some View {
+        VStack(spacing: 18) {
+            if vm.creatorPosterImage == nil {
+                // Drop Target & File Picker for Poster Image
+                VStack(spacing: 12) {
+                    Image(systemName: "photo.stack.fill")
+                        .font(.system(size: 44))
+                        .foregroundColor(.purple.opacity(0.8))
+                    
+                    Text("Drag & Drop Poster Image or Wallpaper")
+                        .font(.headline)
+                    
+                    Text("Drop any photo or wallpaper (PNG, JPG, HEIC, WebP) to slice seamlessly across all 10 passcode keys")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 30)
+                    
+                    Button("Choose Poster Image...") {
+                        openPosterPicker()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .controlSize(.regular)
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(isTargetedPoster ? Color.purple : Color.purple.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8]))
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.3).cornerRadius(16))
+                )
+                .padding(.horizontal, 24)
+                .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargetedPoster) { providers in
+                    handlePosterDrop(providers: providers)
+                }
+            } else {
+                // Controls Bar when poster is loaded
+                HStack(spacing: 16) {
+                    Button("Change Poster...") {
+                        openPosterPicker()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    
+                    Button("Reset Position") {
+                        withAnimation(.spring()) {
+                            vm.creatorPosterZoom = 1.0
+                            vm.creatorPosterOffset = .zero
+                            dragOffsetStart = .zero
+                            vm.updatePosterSlicing()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    
+                    Spacer()
+                    
+                    // Zoom slider
+                    HStack(spacing: 8) {
+                        Image(systemName: "minus.magnifyingglass")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        
+                        Slider(value: $vm.creatorPosterZoom, in: 0.5...3.0, step: 0.05) {
+                            Text("Zoom")
+                        }
+                        .frame(width: 140)
+                        .onChange(of: vm.creatorPosterZoom) { _, _ in
+                            vm.updatePosterSlicing()
+                        }
+                        
+                        Image(systemName: "plus.magnifyingglass")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        
+                        Text(String(format: "%.1fx", vm.creatorPosterZoom))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                    
+                    Button(action: {
+                        vm.adoptPosterSlicesToIndividualKeys()
+                        vm.creatorSubMode = .individualKeys
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.grid.3x3.fill")
+                            Text("Edit Individual Keys")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 24)
+                
+                // Interactive 3x4 Dialer Preview
+                VStack(spacing: 10) {
+                    HStack {
+                        Text("Live Lock Screen Dialer Preview")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Text("Drag anywhere on the dialer to reposition the wallpaper")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 6)
+                    
+                    posterKeypadLivePreview
+                }
+                .padding(20)
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
+                )
+                .padding(.horizontal, 24)
+            }
+        }
+    }
+    
+    private var posterKeypadLivePreview: some View {
+        let keysLayout: [[(digit: String, letters: String)]] = [
+            [("1", ""), ("2", "A B C"), ("3", "D E F")],
+            [("4", "G H I"), ("5", "J K L"), ("6", "M N O")],
+            [("7", "P Q R S"), ("8", "T U V"), ("9", "W X Y Z")],
+            [("", ""), ("0", "+"), ("", "")]
+        ]
+        
+        return VStack(spacing: 14) {
+            // Lock Screen Header
+            VStack(spacing: 6) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white.opacity(0.9))
+                
+                Text("Enter Passcode")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(.white.opacity(0.9))
+                
+                // Passcode Dots
+                HStack(spacing: 12) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        Circle()
+                            .stroke(Color.white.opacity(0.5), lineWidth: 1.5)
+                            .frame(width: 10, height: 10)
+                    }
+                }
+                .padding(.top, 2)
+            }
+            .padding(.top, 14)
+            
+            // 3x4 Grid
+            VStack(spacing: KeypadLayout.verticalSpacing) {
+                ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
+                    HStack(spacing: KeypadLayout.horizontalSpacing) {
+                        ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
+                            let item = keysLayout[rowIdx][colIdx]
+                            if item.digit.isEmpty {
+                                Color.clear
+                                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                            } else {
+                                posterLiveKeyView(digit: item.digit, letters: item.letters)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Lock Screen Footer
+            HStack {
+                Text("Emergency")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundColor(.white.opacity(0.8))
+                Spacer()
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 12)
+        }
+        .padding(.vertical, 8)
+        .frame(width: 320)
+        .background(
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(Color.black.opacity(0.85))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 8)
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    vm.creatorPosterOffset = CGPoint(
+                        x: dragOffsetStart.x + value.translation.width,
+                        y: dragOffsetStart.y + value.translation.height
+                    )
+                    vm.updatePosterSlicing()
+                }
+                .onEnded { _ in
+                    dragOffsetStart = vm.creatorPosterOffset
+                }
+        )
+        .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: nil) { providers in
+            handlePosterDrop(providers: providers)
+        }
+    }
+    
+    private func posterLiveKeyView(digit: String, letters: String) -> some View {
+        let slicedImg = vm.creatorSlicedKeys[digit]
+        
+        return ZStack {
+            if let img = slicedImg {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    .clipShape(Circle())
+            } else {
+                Circle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+            }
+            
+            Circle()
+                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+            
+            VStack(spacing: 1) {
+                Text(digit)
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundColor(.white)
+                if !letters.isEmpty {
+                    Text(letters)
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(1)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+            }
+        }
+    }
+    
+    // MARK: - Individual Keys Mode View
+    
+    private var individualKeysView: some View {
+        let keysLayout: [[(digit: String, letters: String)]] = [
+            [("1", ""), ("2", "A B C"), ("3", "D E F")],
+            [("4", "G H I"), ("5", "J K L"), ("6", "M N O")],
+            [("7", "P Q R S"), ("8", "T U V"), ("9", "W X Y Z")],
+            [("", ""), ("0", "+"), ("", "")]
+        ]
+        
+        return VStack(spacing: 18) {
+            // Helper Controls Bar
+            HStack(spacing: 14) {
+                HStack(spacing: 6) {
+                    Image(systemName: "hand.tap.fill")
+                        .foregroundColor(.accentColor)
+                    Text("\(vm.creatorCustomKeys.count) of 10 keys customized")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
+                
+                Spacer()
+                
+                if !vm.creatorSlicedKeys.isEmpty {
+                    Button("Fill from Poster Slices") {
+                        vm.adoptPosterSlicesToIndividualKeys()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                
+                Button("Clear All Keys") {
+                    vm.creatorCustomKeys.removeAll()
+                    vm.statusText = "All individual keys cleared"
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(vm.creatorCustomKeys.isEmpty)
+            }
+            .padding(.horizontal, 24)
+            
+            // 3x4 Grid
+            VStack(spacing: 14) {
+                HStack {
+                    Text("Interactive Keypad (Click or drop images onto any key)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                
+                VStack(spacing: KeypadLayout.verticalSpacing) {
+                    ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
+                        HStack(spacing: KeypadLayout.horizontalSpacing) {
+                            ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
+                                let item = keysLayout[rowIdx][colIdx]
+                                if item.digit.isEmpty {
+                                    Color.clear
+                                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                                } else {
+                                    individualKeySlot(digit: item.digit, letters: item.letters)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+    
+    private func individualKeySlot(digit: String, letters: String) -> some View {
+        let customImage = vm.creatorCustomKeys[digit]
+        
+        return ZStack(alignment: .topTrailing) {
+            Button(action: { openIndividualKeyPicker(for: digit) }) {
+                ZStack {
+                    if let img = customImage {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                            .clipShape(Circle())
+                        
+                        Circle()
+                            .stroke(Color.purple.opacity(0.6), lineWidth: 2)
+                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                        
+                        VStack(spacing: 1) {
+                            Text(digit)
+                                .font(.system(size: 26, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
+                            if !letters.isEmpty {
+                                Text(letters)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
+                            }
+                        }
+                    } else {
+                        Circle()
+                            .fill(Color(NSColor.controlBackgroundColor))
+                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                        
+                        Circle()
+                            .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [4]))
+                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                        
+                        VStack(spacing: 2) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.accentColor)
+                            Text(digit)
+                                .font(.system(size: 22, weight: .light))
+                            if !letters.isEmpty {
+                                Text(letters)
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .tracking(1)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Click or drag an image here to customize key \(digit)")
+            .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: nil) { providers in
+                handleIndividualKeyDrop(digit: digit, providers: providers)
+            }
+            
+            // Delete button for this key
+            if customImage != nil {
+                Button(action: { vm.clearIndividualKey(digit: digit) }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.red)
+                        .background(Circle().fill(Color.white))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 4, y: -4)
+                .help("Remove custom icon for key \(digit)")
+            }
+        }
+        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+    }
+    
+    // MARK: - Warning Banner
+    
+    private var boldTextWarningBox: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+                .font(.title3)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Important Requirement: Turn OFF Bold Text")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                Text("On your iPhone, navigate to **Settings ➔ Display & Brightness** and ensure **Bold Text is turned OFF**. Otherwise, iOS overrides cached keypad graphics with standard vector fonts.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.orange.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.orange.opacity(0.3), lineWidth: 1))
+        .padding(.horizontal, 24)
+        .padding(.bottom, 16)
+    }
+    
     private var activityLogView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1585,7 +2484,18 @@ struct ContentView: View {
                     }
                     
                     if vm.selectedTab == .passcodeThemes {
-                        if let theme = vm.loadedPasscodeTheme {
+                        if vm.passcodeTabMode == .themeCreator {
+                            let count = vm.effectiveCreatorKeys.count
+                            if count > 0 {
+                                Text("Theme Creator · \(count) of 10 keys configured · Target: \(vm.targetTelephonyVersion)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("Theme Creator · Import a poster or drop icons onto keys")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        } else if let theme = vm.loadedPasscodeTheme {
                             Text("\(theme.fileCount) assets ready · Target: \(vm.targetTelephonyVersion)")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
@@ -1617,23 +2527,65 @@ struct ContentView: View {
                 
                 // Apply / Flash Button
                 if vm.selectedTab == .passcodeThemes {
-                    Button(action: { vm.flashPasscodeTheme() }) {
-                        HStack(spacing: 6) {
-                            if vm.isFlashing {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                            } else {
-                                Image(systemName: "lock.shield.fill")
+                    if vm.passcodeTabMode == .themeCreator {
+                        HStack(spacing: 8) {
+                            Button(action: { vm.clearCreator() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "trash")
+                                    Text("Clear All")
+                                }
                             }
-                            Text(vm.isFlashing ? "Flashing Passcode..." : "Flash Passcode Theme")
-                                .fontWeight(.semibold)
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+                            .disabled(vm.effectiveCreatorKeys.isEmpty && vm.creatorPosterImage == nil)
+                            
+                            Button(action: { openSavePasscodeThemePanel() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "square.and.arrow.up")
+                                    Text("Export .passthm...")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+                            .disabled(vm.effectiveCreatorKeys.isEmpty)
+                            
+                            Button(action: { vm.flashCreatedTheme() }) {
+                                HStack(spacing: 6) {
+                                    if vm.isFlashing {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                    } else {
+                                        Image(systemName: "lock.shield.fill")
+                                    }
+                                    Text(vm.isFlashing ? "Flashing Passcode..." : "Flash to iPhone")
+                                        .fontWeight(.semibold)
+                                }
+                                .padding(.horizontal, 8)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.purple)
+                            .controlSize(.regular)
+                            .disabled(vm.effectiveCreatorKeys.isEmpty || vm.isFlashing || vm.device?.connected != true)
                         }
-                        .padding(.horizontal, 8)
+                    } else {
+                        Button(action: { vm.flashPasscodeTheme() }) {
+                            HStack(spacing: 6) {
+                                if vm.isFlashing {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: "lock.shield.fill")
+                                }
+                                Text(vm.isFlashing ? "Flashing Passcode..." : "Flash Passcode Theme")
+                                    .fontWeight(.semibold)
+                            }
+                            .padding(.horizontal, 8)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .controlSize(.regular)
+                        .disabled(vm.loadedPasscodeTheme == nil || vm.isFlashing || vm.device?.connected != true)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.purple)
-                    .controlSize(.regular)
-                    .disabled(vm.loadedPasscodeTheme == nil || vm.isFlashing || vm.device?.connected != true)
                 } else {
                     Button(action: { vm.applySkin() }) {
                         HStack(spacing: 6) {
@@ -1809,6 +2761,114 @@ struct ContentView: View {
         panel.message = "Choose a .passthm passcode theme package..."
         if panel.runModal() == .OK, let url = panel.url {
             vm.inspectPasscodeTheme(url: url)
+        }
+    }
+    
+    private func openPosterPicker() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Poster Image"
+        panel.message = "Select a wallpaper or photo to slice for the passcode keypad..."
+        panel.allowedContentTypes = [
+            UTType.png,
+            UTType.jpeg,
+            UTType(filenameExtension: "heic") ?? .image,
+            UTType(filenameExtension: "webp") ?? .image,
+            .image
+        ]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        
+        if panel.runModal() == .OK, let url = panel.url, let img = NSImage(contentsOf: url) {
+            vm.setPosterImage(img)
+        }
+    }
+    
+    private func openIndividualKeyPicker(for digit: String) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Icon for Key \(digit)"
+        panel.message = "Select an icon or image for key \(digit)..."
+        panel.allowedContentTypes = [
+            UTType.png,
+            UTType.jpeg,
+            UTType(filenameExtension: "heic") ?? .image,
+            UTType(filenameExtension: "webp") ?? .image,
+            .image
+        ]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        
+        if panel.runModal() == .OK, let url = panel.url, let img = NSImage(contentsOf: url) {
+            vm.setIndividualKey(digit: digit, image: img)
+        }
+    }
+    
+    private func openSavePasscodeThemePanel() {
+        let keys = vm.effectiveCreatorKeys
+        guard !keys.isEmpty else {
+            vm.errorMessage = "Please configure at least one key before exporting."
+            return
+        }
+        
+        let panel = NSSavePanel()
+        panel.title = "Save Passcode Theme"
+        panel.prompt = "Export"
+        panel.nameFieldStringValue = "CustomTheme.passthm"
+        panel.allowedContentTypes = [UTType(filenameExtension: "passthm") ?? .data]
+        panel.canCreateDirectories = true
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try PasscodeThemeExporter.exportTheme(keys: keys, targetURL: url)
+                vm.statusText = "Theme exported successfully to \(url.lastPathComponent)"
+                vm.log("Exported .passthm to \(url.path)")
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                vm.errorMessage = "Failed to export theme: \(error.localizedDescription)"
+            }
+        }
+    }
+    
+    private func handlePosterDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        loadImage(from: provider) { img in
+            if let img = img {
+                vm.setPosterImage(img)
+            }
+        }
+        return true
+    }
+    
+    private func handleIndividualKeyDrop(digit: String, providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        loadImage(from: provider) { img in
+            if let img = img {
+                vm.setIndividualKey(digit: digit, image: img)
+            }
+        }
+        return true
+    }
+    
+    private func loadImage(from provider: NSItemProvider, completion: @escaping (NSImage?) -> Void) {
+        if provider.canLoadObject(ofClass: URL.self) {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url = url, let img = NSImage(contentsOf: url) {
+                    DispatchQueue.main.async { completion(img) }
+                    return
+                }
+                if provider.canLoadObject(ofClass: NSImage.self) {
+                    _ = provider.loadObject(ofClass: NSImage.self) { img, _ in
+                        DispatchQueue.main.async { completion(img as? NSImage) }
+                    }
+                } else {
+                    DispatchQueue.main.async { completion(nil) }
+                }
+            }
+        } else if provider.canLoadObject(ofClass: NSImage.self) {
+            _ = provider.loadObject(ofClass: NSImage.self) { img, _ in
+                DispatchQueue.main.async { completion(img as? NSImage) }
+            }
+        } else {
+            completion(nil)
         }
     }
 }
