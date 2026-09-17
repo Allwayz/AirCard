@@ -65,13 +65,12 @@ struct KeypadButtonGeometry: Identifiable {
 
 struct KeypadLayout {
     static let buttonDiameter: CGFloat = 75.0
-    static let colWidth: CGFloat = 101.67 // 305.0 / 3
-    static let rowHeight: CGFloat = 95.67 // 287.0 / 3
+    static let gridWidth: CGFloat = 305.0 // 915.0 / 3
+    static let gridHeight: CGFloat = 1148.0 / 3.0 // 382.6666666666667
+    static let colWidth: CGFloat = 305.0 / 3.0 // 101.66666666666667
+    static let rowHeight: CGFloat = 1148.0 / 12.0 // 287.0 / 3 = 95.66666666666667
     static let horizontalSpacing: CGFloat = 24.0
     static let verticalSpacing: CGFloat = 18.0
-    
-    static let gridWidth: CGFloat = 305.0 // 915.0 / 3
-    static let gridHeight: CGFloat = 382.67 // 1148.0 / 3
     
     static let allButtons: [KeypadButtonGeometry] = [
         KeypadButtonGeometry(digit: "1", letters: "", row: 0, col: 0),
@@ -155,10 +154,20 @@ class KeypadSlicer {
         let colW: CGFloat = 305.0
         let rowH: CGFloat = 287.0
         
-        let baseScale = max(gridW / imgW, gridH / imgH)
-        let scale = baseScale * CGFloat(max(0.1, zoom))
-        let scaledW = imgW * scale
-        let scaledH = imgH * scale
+        let imgAspect = imgW / imgH
+        let gridAspect = gridW / gridH
+        
+        let scaledW: CGFloat
+        let scaledH: CGFloat
+        if imgAspect > gridAspect {
+            // Image is wider than grid -> fit height
+            scaledH = gridH * CGFloat(max(0.1, zoom))
+            scaledW = scaledH * imgAspect
+        } else {
+            // Image is taller than grid -> fit width
+            scaledW = gridW * CGFloat(max(0.1, zoom))
+            scaledH = scaledW / imgAspect
+        }
         
         // Match user's pan offset in SwiftUI points (scaled to 3x)
         let imageX = (gridW - scaledW) / 2.0 + offset.x * 3.0
@@ -1340,6 +1349,7 @@ struct ContentView: View {
     @State private var showCredits = false
     @State private var dragOffsetStart: CGPoint = .zero
     @State private var isTargetedPoster = false
+    @State private var isTargetedTheme = false
     
     private var readyToFlashCount: Int {
         vm.cards.filter { $0.isSelected && $0.customImageURL != nil }.count
@@ -1350,30 +1360,28 @@ struct ContentView: View {
             // 1. Top Header Bar
             headerView
                 .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .frame(height: 54)
                 .background(Color(NSColor.controlBackgroundColor))
             
             Divider()
             
-            // 2. Control Toolbar (for Wallet Cards)
-            if vm.selectedTab == .walletCards {
-                toolbarView
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color(NSColor.windowBackgroundColor))
-                
-                Divider()
-                
-                // 3. Live Scanner Notice Banner (if active)
-                if vm.isScanningCards {
-                    scanningNoticeBanner
+            // 2. Control Toolbar (Unified across tabs to prevent resizing/jumping)
+            Group {
+                if vm.selectedTab == .walletCards {
+                    toolbarView
+                } else {
+                    passcodeToolbarView
                 }
-            } else {
-                passcodeToolbarView
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color(NSColor.windowBackgroundColor))
-                
+            }
+            .frame(height: 46)
+            .padding(.horizontal, 20)
+            .background(Color(NSColor.windowBackgroundColor))
+            
+            Divider()
+            
+            // 3. Live Scanner Notice Banner (if active)
+            if vm.selectedTab == .walletCards && vm.isScanningCards {
+                scanningNoticeBanner
                 Divider()
             }
             
@@ -1421,7 +1429,7 @@ struct ContentView: View {
                 .padding(.vertical, 10)
                 .background(Color(NSColor.controlBackgroundColor))
         }
-        .frame(minWidth: 780, minHeight: 640)
+        .frame(minWidth: 880, minHeight: 680)
         .alert("Success!", isPresented: $vm.showSuccessAlert) {
             Button("OK") {}
         } message: {
@@ -1757,117 +1765,39 @@ struct ContentView: View {
     // MARK: - Apply Theme Mode
     
     private var passcodeApplyThemeWorkspaceView: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Loaded Theme Banner or Drop Target
-                if let theme = vm.loadedPasscodeTheme {
-                    HStack(spacing: 16) {
-                        Image(systemName: "lock.square.stack.fill")
-                            .font(.system(size: 34))
-                            .foregroundColor(.purple)
-                        
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 8) {
-                                Text(theme.name)
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                
-                                Text(theme.detectedVersion)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.purple.opacity(0.15))
-                                    .foregroundColor(.purple)
-                                    .cornerRadius(6)
-                            }
-                            
-                            Text("\(theme.fileCount) artwork assets loaded · Ready to flash to iPhone")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Button("Change...") {
-                            openPasscodeThemePicker()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(NSColor.controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.purple.opacity(0.3), lineWidth: 1)
-                    )
-                    .padding(.horizontal, 24)
-                } else {
-                    // Empty Drop Target
-                    VStack(spacing: 12) {
-                        Image(systemName: "square.and.arrow.down.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(.accentColor.opacity(0.8))
-                        
-                        Text("Drag & Drop your .passthm file here")
-                            .font(.headline)
-                        
-                        Text("Supports .passthm, .passtheme, or .zip passcode themes from Cowabunga / TrollTools / Nugget")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Button("Choose .passthm File...") {
-                            openPasscodeThemePicker()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
-                        .padding(.top, 4)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 32)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8]))
-                            .background(Color(NSColor.controlBackgroundColor).opacity(0.3).cornerRadius(16))
-                    )
-                    .padding(.horizontal, 24)
-                }
-                
-                // Keypad Interactive Preview (3x4 Phone Passcode Style)
-                VStack(spacing: 14) {
-                    HStack {
-                        Text("Lock Screen Keypad Preview")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        if vm.loadedPasscodeTheme != nil {
-                            Text("Custom Artwork Loaded")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.green)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    
-                    passcodeKeypadGrid
-                }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
-                )
-                .padding(.horizontal, 24)
-                
+        HStack(alignment: .top, spacing: 20) {
+            // Left Column: Controls & Actions (width: 320)
+            VStack(alignment: .leading, spacing: 14) {
+                applyThemeControlsCard
                 boldTextWarningBox
+                Spacer()
             }
-            .padding(.top, 16)
+            .frame(width: 320)
+            
+            // Right Column: Authentic iPhone Lock Screen Mockup
+            VStack(spacing: 8) {
+                HStack {
+                    Text("Lock Screen Keypad Preview")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if vm.loadedPasscodeTheme != nil {
+                        Text("Custom Theme Loaded")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.green)
+                    }
+                }
+                .padding(.horizontal, 6)
+                
+                phoneMockupContainer {
+                    applyThemeDialerCanvas
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
         .onDrop(of: [UTType.fileURL, UTType.data], isTargeted: nil) { providers in
             if let provider = providers.first {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
@@ -1887,197 +1817,325 @@ struct ContentView: View {
         }
     }
     
-    private var passcodeKeypadGrid: some View {
-        let keysLayout: [[(digit: String, letters: String)]] = [
-            [("1", ""), ("2", "A B C"), ("3", "D E F")],
-            [("4", "G H I"), ("5", "J K L"), ("6", "M N O")],
-            [("7", "P Q R S"), ("8", "T U V"), ("9", "W X Y Z")],
-            [("", ""), ("0", "+"), ("", "")]
-        ]
-        
-        return VStack(spacing: 12) {
-            ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
-                HStack(spacing: 22) {
-                    ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
-                        let item = keysLayout[rowIdx][colIdx]
-                        if item.digit.isEmpty {
-                            Color.clear
-                                .frame(width: 68, height: 68)
-                        } else {
-                            passcodeKeyView(digit: item.digit, letters: item.letters)
+    private var applyThemeControlsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Passcode Theme File")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.secondary)
+            
+            if let theme = vm.loadedPasscodeTheme {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "lock.square.stack.fill")
+                            .font(.system(size: 28))
+                            .foregroundColor(.purple)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(theme.name)
+                                .font(.headline)
+                                .fontWeight(.bold)
+                            
+                            Text(theme.detectedVersion)
+                                .font(.system(size: 9, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.purple.opacity(0.15))
+                                .foregroundColor(.purple)
+                                .cornerRadius(4)
+                        }
+                    }
+                    
+                    Text("\(theme.fileCount) artwork assets loaded · Ready to flash to iPhone")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    HStack(spacing: 8) {
+                        Button("Change...") {
+                            openPasscodeThemePicker()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        
+                        Button("Clear") {
+                            vm.loadedPasscodeTheme = nil
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(12)
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "square.and.arrow.down.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(.purple)
+                    
+                    Text("Drop .passthm file here")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    
+                    Text("Supports .passthm, .passtheme, or .zip packages from Cowabunga or Nugget")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                    
+                    Button("Choose File...") {
+                        openPasscodeThemePicker()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(isTargetedTheme ? Color.purple : Color.purple.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.4).cornerRadius(12))
+                )
+                .onDrop(of: [UTType.fileURL, UTType.data], isTargeted: $isTargetedTheme) { providers in
+                    if let provider = providers.first {
+                        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                            if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                                Task { @MainActor in
+                                    vm.inspectPasscodeTheme(url: url)
+                                }
+                            } else if let url = item as? URL {
+                                Task { @MainActor in
+                                    vm.inspectPasscodeTheme(url: url)
+                                }
+                            }
+                        }
+                        return true
+                    }
+                    return false
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 1)
+        )
+    }
+    
+    private var applyThemeDialerCanvas: some View {
+        ZStack {
+            ForEach(KeypadLayout.allButtons) { btn in
+                let cellX = CGFloat(btn.col) * KeypadLayout.colWidth
+                let cellY = CGFloat(btn.row) * KeypadLayout.rowHeight
+                let centerX = cellX + KeypadLayout.colWidth / 2.0
+                let centerY = cellY + KeypadLayout.rowHeight / 2.0
+                
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    
+                    if let img = vm.loadedPasscodeTheme?.keysPreview[btn.digit] {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                            .clipShape(Circle())
+                    }
+                    
+                    Circle()
+                        .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    
+                    VStack(spacing: 1) {
+                        Text(btn.digit)
+                            .font(.system(size: 28, weight: .light))
+                            .foregroundColor(.white)
+                        if !btn.letters.isEmpty {
+                            Text(btn.letters)
+                                .font(.system(size: 9, weight: .semibold))
+                                .tracking(1)
+                                .foregroundColor(.white.opacity(0.9))
                         }
                     }
                 }
+                .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                .position(x: centerX, y: centerY)
             }
         }
-    }
-    
-    private func passcodeKeyView(digit: String, letters: String) -> some View {
-        let customImage = vm.loadedPasscodeTheme?.keysPreview[digit]
-        
-        return ZStack {
-            if let img = customImage {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 68, height: 68)
-                    .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(Color(NSColor.controlBackgroundColor))
-                    .frame(width: 68, height: 68)
-                    .overlay(Circle().stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-                
-                VStack(spacing: 1) {
-                    Text(digit)
-                        .font(.system(size: 26, weight: .light))
-                    if !letters.isEmpty {
-                        Text(letters)
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(1)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        .frame(width: 68, height: 68)
-        .shadow(color: Color.black.opacity(0.08), radius: 2, x: 0, y: 1)
+        .frame(width: KeypadLayout.gridWidth, height: KeypadLayout.gridHeight)
     }
     
     // MARK: - Theme Creator Mode
     
     private var passcodeThemeCreatorWorkspaceView: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Header Bar for Creator
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(vm.creatorSubMode == .posterSlice ? "Poster Slice Mode" : "Individual Keys Mode")
-                            .font(.headline)
-                            .fontWeight(.bold)
-                        Text(vm.creatorSubMode == .posterSlice
-                             ? "Position and slice a wallpaper across the iOS lock screen dialer grid"
-                             : "Customize each digit key individually with custom icons or images")
-                            .font(.caption)
+        HStack(alignment: .top, spacing: 20) {
+            // Left Column: Controls & Actions (width: 320)
+            VStack(alignment: .leading, spacing: 14) {
+                creatorControlsCard
+                boldTextWarningBox
+                Spacer()
+            }
+            .frame(width: 320)
+            
+            // Right Column: Authentic iPhone Lock Screen Mockup
+            VStack(spacing: 8) {
+                HStack {
+                    Text("Interactive iPhone Lock Screen Preview")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if vm.creatorSubMode == .posterSlice && vm.creatorPosterImage != nil {
+                        Text("Drag dialer to pan · Use slider to zoom")
+                            .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    
-                    Spacer()
-                    
-                    Button("Clear All") {
-                        vm.clearCreator()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(vm.effectiveCreatorKeys.isEmpty && vm.creatorPosterImage == nil)
-                    
-                    Button(action: { openSavePasscodeThemePanel() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Export .passthm...")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(vm.effectiveCreatorKeys.isEmpty)
                 }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(NSColor.controlBackgroundColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.purple.opacity(0.3), lineWidth: 1)
-                )
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 6)
                 
-                if vm.creatorSubMode == .posterSlice {
-                    posterSliceView
-                } else {
-                    individualKeysView
+                phoneMockupContainer {
+                    creatorDialerCanvas
                 }
-                
-                boldTextWarningBox
             }
-            .padding(.top, 16)
+            .frame(maxWidth: .infinity)
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
     }
     
-    // MARK: - Poster Slice Mode View
-    
-    private var posterSliceView: some View {
-        VStack(spacing: 18) {
-            if vm.creatorPosterImage == nil {
-                // Drop Target & File Picker for Poster Image
-                VStack(spacing: 12) {
-                    Image(systemName: "photo.stack.fill")
-                        .font(.system(size: 44))
-                        .foregroundColor(.purple.opacity(0.8))
-                    
-                    Text("Drag & Drop Poster Image or Wallpaper")
-                        .font(.headline)
-                    
-                    Text("Drop any photo or wallpaper (PNG, JPG, HEIC, WebP) to slice seamlessly across all 10 passcode keys")
+    private var creatorControlsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if vm.creatorSubMode == .posterSlice {
+                // 1. Poster Source Section
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Poster Artwork")
                         .font(.caption)
+                        .fontWeight(.semibold)
                         .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 30)
                     
-                    Button("Choose Poster Image...") {
-                        openPosterPicker()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.purple)
-                    .controlSize(.regular)
-                    .padding(.top, 4)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(isTargetedPoster ? Color.purple : Color.purple.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8]))
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.3).cornerRadius(16))
-                )
-                .padding(.horizontal, 24)
-                .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargetedPoster) { providers in
-                    handlePosterDrop(providers: providers)
-                }
-            } else {
-                // Controls Bar when poster is loaded
-                HStack(spacing: 14) {
-                    Button("Change Poster...") {
-                        openPosterPicker()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    
-                    Button("Reset Position") {
-                        withAnimation(.spring()) {
-                            vm.creatorPosterZoom = 1.0
-                            vm.creatorPosterOffset = .zero
-                            dragOffsetStart = .zero
-                            vm.updatePosterSlicing()
+                    if let poster = vm.creatorPosterImage {
+                        HStack(spacing: 12) {
+                            Image(nsImage: poster)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 50, height: 64)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color.purple.opacity(0.4), lineWidth: 1)
+                                )
+                            
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Artwork Loaded")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                
+                                HStack(spacing: 8) {
+                                    Button("Change...") {
+                                        openPosterPicker()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    
+                                    Button("Remove") {
+                                        vm.clearCreator()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(10)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.badge.plus")
+                                .font(.system(size: 26))
+                                .foregroundColor(.purple)
+                            
+                            Text("Drop poster or wallpaper here")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            
+                            Button("Choose Image...") {
+                                openPosterPicker()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.purple)
+                            .controlSize(.small)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(isTargetedPoster ? Color.purple : Color.purple.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.4).cornerRadius(10))
+                        )
+                        .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargetedPoster) { providers in
+                            handlePosterDrop(providers: providers)
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                }
+                
+                Divider()
+                
+                // 2. Style Section
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Slicing Style")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
                     
-                    Spacer()
-                    
-                    // Style Picker: Seamless vs Circle Buttons
-                    Picker("Style", selection: $vm.creatorMaskToCircles) {
+                    Picker("", selection: $vm.creatorMaskToCircles) {
                         Text("Seamless Poster").tag(false)
                         Text("Circle Buttons").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 210)
                     .onChange(of: vm.creatorMaskToCircles) { _, _ in
                         vm.updatePosterSlicing()
                     }
                     
-                    // Zoom slider
-                    HStack(spacing: 6) {
+                    Text(vm.creatorMaskToCircles ? "Artwork is clipped into individual circular button icons." : "Seamless artwork spans across dialer keys without circular cuts (Adobe Dog style).")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                
+                Divider()
+                
+                // 3. Framing & Zoom Section
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Zoom & Framing")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        Button("Reset Position") {
+                            withAnimation(.spring()) {
+                                vm.creatorPosterZoom = 1.0
+                                vm.creatorPosterOffset = .zero
+                                dragOffsetStart = .zero
+                                vm.updatePosterSlicing()
+                            }
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption2)
+                        .disabled(vm.creatorPosterImage == nil)
+                    }
+                    
+                    HStack(spacing: 8) {
                         Image(systemName: "minus.magnifyingglass")
                             .foregroundColor(.secondary)
                             .font(.caption)
@@ -2085,176 +2143,145 @@ struct ContentView: View {
                         Slider(value: $vm.creatorPosterZoom, in: 0.5...3.0, step: 0.05) {
                             Text("Zoom")
                         }
-                        .frame(width: 110)
                         .onChange(of: vm.creatorPosterZoom) { _, _ in
                             vm.updatePosterSlicing()
                         }
+                        .disabled(vm.creatorPosterImage == nil)
                         
                         Image(systemName: "plus.magnifyingglass")
                             .foregroundColor(.secondary)
                             .font(.caption)
                         
                         Text(String(format: "%.1fx", vm.creatorPosterZoom))
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .frame(width: 32, alignment: .trailing)
                     }
                     
-                    Button(action: {
-                        vm.adoptPosterSlicesToIndividualKeys()
-                        vm.creatorSubMode = .individualKeys
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "square.grid.3x3.fill")
-                            Text("Edit Individual Keys")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                .padding(.horizontal, 24)
-                
-                // Interactive Lock Screen Dialer Preview
-                VStack(spacing: 10) {
-                    HStack {
-                        Text("Live Lock Screen Dialer Preview")
-                            .font(.caption)
-                            .fontWeight(.semibold)
+                    HStack(spacing: 6) {
+                        Image(systemName: "hand.draw")
                             .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Text("Drag anywhere on the dialer to reposition the image")
+                            .font(.caption2)
+                        Text("Drag anywhere on the dialer preview to reposition")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    .padding(.horizontal, 6)
-                    
-                    posterKeypadLivePreview
                 }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
-                )
-                .padding(.horizontal, 24)
+                
+                Divider()
+                
+                // 4. Switch to Individual Keys Button
+                Button(action: {
+                    vm.adoptPosterSlicesToIndividualKeys()
+                    vm.creatorSubMode = .individualKeys
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.grid.3x3.fill")
+                        Text("Switch to Individual Keys Mode")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                
+            } else {
+                // Individual Keys Mode Controls
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Individual Keys")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Click any key on the dialer preview to assign a custom image or drop files onto it.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.accentColor)
+                        Text("\(vm.creatorCustomKeys.count) of 10 keys configured")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    
+                    if !vm.creatorSlicedKeys.isEmpty {
+                        Button("Fill from Poster Slices") {
+                            vm.adoptPosterSlicesToIndividualKeys()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    
+                    Button("Clear All Keys") {
+                        vm.creatorCustomKeys.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(vm.creatorCustomKeys.isEmpty)
+                }
             }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 1)
+        )
+    }
+    
+    private func scaledPosterDimensions(for poster: NSImage) -> (width: CGFloat, height: CGFloat) {
+        let imgAspect = poster.size.width / poster.size.height
+        let gridAspect = KeypadLayout.gridWidth / KeypadLayout.gridHeight
+        let zoom = CGFloat(max(0.1, vm.creatorPosterZoom))
+        if imgAspect > gridAspect {
+            let h = KeypadLayout.gridHeight * zoom
+            return (width: h * imgAspect, height: h)
+        } else {
+            let w = KeypadLayout.gridWidth * zoom
+            return (width: w, height: w / imgAspect)
         }
     }
     
-    private var posterKeypadLivePreview: some View {
-        let keysLayout: [[(digit: String, letters: String)]] = [
-            [("1", ""), ("2", "A B C"), ("3", "D E F")],
-            [("4", "G H I"), ("5", "J K L"), ("6", "M N O")],
-            [("7", "P Q R S"), ("8", "T U V"), ("9", "W X Y Z")],
-            [("", ""), ("0", "+"), ("", "")]
-        ]
-        
-        let containerW: CGFloat = KeypadLayout.gridWidth + 36
-        let containerH: CGFloat = KeypadLayout.gridHeight + 170
-        
-        return ZStack {
-            // Background Wallpaper / Image (Seamless Character / Poster)
-            if let poster = vm.creatorPosterImage {
-                GeometryReader { geo in
-                    let baseScale = max(geo.size.width / poster.size.width, geo.size.height / poster.size.height)
-                    let scale = baseScale * CGFloat(vm.creatorPosterZoom)
-                    let scaledW = poster.size.width * scale
-                    let scaledH = poster.size.height * scale
-                    Image(nsImage: poster)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: scaledW, height: scaledH)
-                        .position(
-                            x: geo.size.width / 2.0 + vm.creatorPosterOffset.x,
-                            y: geo.size.height / 2.0 + vm.creatorPosterOffset.y
-                        )
-                }
-                .clipped()
-            } else {
-                Color.black.opacity(0.9)
+    private var creatorDialerCanvas: some View {
+        ZStack {
+            // Layer 1: Background Poster Image (Seamless Poster Mode)
+            if vm.creatorSubMode == .posterSlice, let poster = vm.creatorPosterImage, !vm.creatorMaskToCircles {
+                let dims = scaledPosterDimensions(for: poster)
+                Image(nsImage: poster)
+                    .resizable()
+                    .frame(width: dims.width, height: dims.height)
+                    .position(
+                        x: KeypadLayout.gridWidth / 2.0 + vm.creatorPosterOffset.x,
+                        y: KeypadLayout.gridHeight / 2.0 + vm.creatorPosterOffset.y
+                    )
             }
             
-            // Subtle frosted overlay to ensure key typography readability
-            Color.black.opacity(0.2)
-            
-            // Lock Screen UI Overlay
-            VStack(spacing: 0) {
-                // Lock Screen Header
-                VStack(spacing: 6) {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.95))
-                    
-                    Text("Enter Passcode")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundColor(.white.opacity(0.95))
-                    
-                    // Passcode 6-Dot Indicator
-                    HStack(spacing: 12) {
-                        ForEach(0..<6, id: \.self) { _ in
-                            Circle()
-                                .stroke(Color.white.opacity(0.75), lineWidth: 1.5)
-                                .frame(width: 10, height: 10)
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-                .padding(.top, 18)
+            // Layer 2: 10 Buttons laid out in exact cell frames
+            ForEach(KeypadLayout.allButtons) { btn in
+                let cellX = CGFloat(btn.col) * KeypadLayout.colWidth
+                let cellY = CGFloat(btn.row) * KeypadLayout.rowHeight
+                let centerX = cellX + KeypadLayout.colWidth / 2.0
+                let centerY = cellY + KeypadLayout.rowHeight / 2.0
                 
-                Spacer()
-                
-                // 3x4 Authentic Keypad Grid
-                VStack(spacing: KeypadLayout.rowHeight - KeypadLayout.buttonDiameter) {
-                    ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
-                        HStack(spacing: KeypadLayout.colWidth - KeypadLayout.buttonDiameter) {
-                            ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
-                                let item = keysLayout[rowIdx][colIdx]
-                                if item.digit.isEmpty {
-                                    Color.clear
-                                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                                } else {
-                                    posterLiveKeyView(digit: item.digit, letters: item.letters)
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                // Lock Screen Footer Actions
-                HStack {
-                    Text("Emergency")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(.white.opacity(0.9))
-                    Spacer()
-                    Text("Cancel")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(.white.opacity(0.9))
-                }
-                .padding(.horizontal, 28)
-                .padding(.bottom, 16)
+                creatorButtonView(for: btn)
+                    .position(x: centerX, y: centerY)
             }
         }
-        .frame(width: containerW, height: containerH)
-        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
-        )
-        .shadow(color: Color.black.opacity(0.45), radius: 20, x: 0, y: 10)
+        .frame(width: KeypadLayout.gridWidth, height: KeypadLayout.gridHeight)
+        .clipped()
+        .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    vm.creatorPosterOffset = CGPoint(
-                        x: dragOffsetStart.x + value.translation.width,
-                        y: dragOffsetStart.y + value.translation.height
-                    )
-                    vm.updatePosterSlicing()
+                    if vm.creatorSubMode == .posterSlice && vm.creatorPosterImage != nil {
+                        vm.creatorPosterOffset = CGPoint(
+                            x: dragOffsetStart.x + value.translation.width,
+                            y: dragOffsetStart.y + value.translation.height
+                        )
+                        vm.updatePosterSlicing()
+                    }
                 }
                 .onEnded { _ in
                     dragOffsetStart = vm.creatorPosterOffset
@@ -2265,230 +2292,183 @@ struct ContentView: View {
         }
     }
     
-    private func posterLiveKeyView(digit: String, letters: String) -> some View {
-        ZStack {
-            // Frosted translucent key circle
-            Circle()
-                .fill(Color.white.opacity(0.2))
-                .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-            
-            Circle()
-                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-            
-            // If user explicitly chose Circular Cutouts, show circle-masked preview
-            if vm.creatorMaskToCircles, let img = vm.creatorSlicedKeys[digit] {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+    private func creatorButtonView(for btn: KeypadButtonGeometry) -> some View {
+        let customIndividualImage = vm.creatorCustomKeys[btn.digit]
+        let slicedImage = vm.creatorSlicedKeys[btn.digit]
+        
+        return ZStack {
+            if vm.creatorSubMode == .posterSlice {
+                if vm.creatorMaskToCircles {
+                    // Circular Cutouts mode: display sliced circular preview
+                    Circle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    
+                    if let img = slicedImage {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                            .clipShape(Circle())
+                    }
+                    
+                    Circle()
+                        .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                } else {
+                    // Seamless Poster mode: frosted translucent circle indicator
+                    Circle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    
+                    Circle()
+                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                }
+            } else {
+                // Individual Keys mode
+                Circle()
+                    .fill(Color.white.opacity(0.18))
                     .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                    .clipShape(Circle())
+                
+                if let img = customIndividualImage {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                        .clipShape(Circle())
+                }
+                
+                Circle()
+                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
             }
             
+            // Authentic Digits & Letters Typography
             VStack(spacing: 1) {
-                Text(digit)
+                Text(btn.digit)
                     .font(.system(size: 28, weight: .light))
                     .foregroundColor(.white)
-                if !letters.isEmpty {
-                    Text(letters)
+                if !btn.letters.isEmpty {
+                    Text(btn.letters)
                         .font(.system(size: 9, weight: .semibold))
                         .tracking(1)
                         .foregroundColor(.white.opacity(0.9))
                 }
             }
         }
-    }
-    
-    // MARK: - Individual Keys Mode View
-    
-    private var individualKeysView: some View {
-        let keysLayout: [[(digit: String, letters: String)]] = [
-            [("1", ""), ("2", "A B C"), ("3", "D E F")],
-            [("4", "G H I"), ("5", "J K L"), ("6", "M N O")],
-            [("7", "P Q R S"), ("8", "T U V"), ("9", "W X Y Z")],
-            [("", ""), ("0", "+"), ("", "")]
-        ]
-        
-        return VStack(spacing: 18) {
-            // Helper Controls Bar
-            HStack(spacing: 14) {
-                HStack(spacing: 6) {
-                    Image(systemName: "hand.tap.fill")
-                        .foregroundColor(.accentColor)
-                    Text("\(vm.creatorCustomKeys.count) of 10 keys customized")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                }
-                
-                Spacer()
-                
-                if !vm.creatorSlicedKeys.isEmpty {
-                    Button("Fill from Poster Slices") {
-                        vm.adoptPosterSlicesToIndividualKeys()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                
-                Button("Clear All Keys") {
-                    vm.creatorCustomKeys.removeAll()
-                    vm.statusText = "All individual keys cleared"
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(vm.creatorCustomKeys.isEmpty)
-            }
-            .padding(.horizontal, 24)
-            
-            // 3x4 Grid
-            VStack(spacing: 14) {
-                HStack {
-                    Text("Interactive Keypad (Click or drop images onto any key)")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                
-                individualKeysGrid(layout: keysLayout)
-                .padding(.vertical, 8)
-            }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
-    private func individualKeysGrid(layout: [[(digit: String, letters: String)]]) -> some View {
-        VStack(spacing: KeypadLayout.verticalSpacing) {
-            ForEach(0..<layout.count, id: \.self) { rowIdx in
-                individualKeyRow(rowItems: layout[rowIdx])
-            }
-        }
-    }
-    
-    private func individualKeyRow(rowItems: [(digit: String, letters: String)]) -> some View {
-        HStack(spacing: KeypadLayout.horizontalSpacing) {
-            ForEach(0..<rowItems.count, id: \.self) { colIdx in
-                let item = rowItems[colIdx]
-                if item.digit.isEmpty {
-                    Color.clear
-                        .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                } else {
-                    individualKeySlot(digit: item.digit, letters: item.letters)
-                }
-            }
-        }
-    }
-    
-    private func individualKeySlot(digit: String, letters: String) -> some View {
-        let customImage = vm.creatorCustomKeys[digit]
-        
-        return ZStack(alignment: .topTrailing) {
-            Button(action: { openIndividualKeyPicker(for: digit) }) {
-                ZStack {
-                    if let img = customImage {
-                        Image(nsImage: img)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                            .clipShape(Circle())
-                        
-                        Circle()
-                            .stroke(Color.purple.opacity(0.6), lineWidth: 2)
-                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                        
-                        VStack(spacing: 1) {
-                            Text(digit)
-                                .font(.system(size: 26, weight: .bold))
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
-                            if !letters.isEmpty {
-                                Text(letters)
-                                    .font(.system(size: 9, weight: .bold))
-                                    .tracking(1)
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
-                            }
-                        }
-                    } else {
-                        Circle()
-                            .fill(Color(NSColor.controlBackgroundColor))
-                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                        
-                        Circle()
-                            .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [4]))
-                            .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                        
-                        VStack(spacing: 2) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.accentColor)
-                            Text(digit)
-                                .font(.system(size: 22, weight: .light))
-                            if !letters.isEmpty {
-                                Text(letters)
-                                    .font(.system(size: 8, weight: .semibold))
-                                    .tracking(1)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .help("Click or drag an image here to customize key \(digit)")
-            .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: nil) { providers in
-                handleIndividualKeyDrop(digit: digit, providers: providers)
-            }
-            
-            // Delete button for this key
-            if customImage != nil {
-                Button(action: { vm.clearIndividualKey(digit: digit) }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.red)
-                        .background(Circle().fill(Color.white))
-                }
-                .buttonStyle(.plain)
-                .offset(x: 4, y: -4)
-                .help("Remove custom icon for key \(digit)")
-            }
-        }
         .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+        .onTapGesture {
+            if vm.creatorSubMode == .individualKeys {
+                openIndividualKeyPicker(for: btn.digit)
+            }
+        }
+        .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: nil) { providers in
+            if vm.creatorSubMode == .individualKeys {
+                return handleIndividualKeyDrop(digit: btn.digit, providers: providers)
+            }
+            return false
+        }
+    }
+    
+    // MARK: - Authentic Phone Lock Screen Mockup Container
+    
+    private func phoneMockupContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ZStack {
+            // Phone Background (Deep Lock Screen Slate / Black)
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
+            
+            // Subtle frosted gradient
+            LinearGradient(
+                colors: [Color.white.opacity(0.04), Color.clear, Color.black.opacity(0.3)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
+            
+            VStack(spacing: 0) {
+                // Lock Screen Header (Height ~64)
+                VStack(spacing: 4) {
+                    Capsule()
+                        .fill(Color.black.opacity(0.6))
+                        .frame(width: 60, height: 18)
+                        .overlay(
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white.opacity(0.9))
+                        )
+                    
+                    Text("Enter Passcode")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(.white.opacity(0.95))
+                        .padding(.top, 2)
+                    
+                    // 6-Dot Indicator
+                    HStack(spacing: 10) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            Circle()
+                                .stroke(Color.white.opacity(0.7), lineWidth: 1.5)
+                                .frame(width: 9, height: 9)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(.top, 12)
+                
+                Spacer(minLength: 2)
+                
+                // The Dialer Grid (Exact 305 x 382.67 pt Canvas)
+                content()
+                    .frame(width: KeypadLayout.gridWidth, height: KeypadLayout.gridHeight)
+                
+                Spacer(minLength: 2)
+                
+                // Lock Screen Footer (Height ~28)
+                HStack {
+                    Text("Emergency")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.white.opacity(0.9))
+                    Spacer()
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 12)
+            }
+        }
+        .frame(width: 326, height: 512)
+        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
+        )
+        .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 8)
     }
     
     // MARK: - Warning Banner
     
     private var boldTextWarningBox: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.orange)
-                .font(.title3)
+                .font(.system(size: 14))
+                .padding(.top, 2)
             
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Important Requirement: Turn OFF Bold Text")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Turn off Bold Text on iPhone")
                     .font(.caption)
-                    .fontWeight(.bold)
-                Text("On your iPhone, navigate to **Settings ➔ Display & Brightness** and ensure **Bold Text is turned OFF**. Otherwise, iOS overrides cached keypad graphics with standard vector fonts.")
+                    .fontWeight(.semibold)
+                Text("Settings ➔ Display & Brightness ➔ **Bold Text OFF**. Otherwise iOS overrides custom keypad artwork.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
         }
-        .padding(14)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.orange.opacity(0.1)))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.orange.opacity(0.3), lineWidth: 1))
-        .padding(.horizontal, 24)
-        .padding(.bottom, 16)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.orange.opacity(0.3), lineWidth: 1))
     }
     
     private var activityLogView: some View {
