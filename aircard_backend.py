@@ -45,12 +45,11 @@ from apply_card_skin import (
     ROOT,
     DEVICE_HELPER,
 )
+from card_assets import CACHE_FILES, build_card_assets
 from aircard import (
     get_connected_device,
     load_saved_cards,
     save_cards,
-    TARGET_ASSETS,
-    CACHE_FILES,
 )
 
 
@@ -123,13 +122,13 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
         print(json.dumps({"ok": False, "error": "Image file not found"}))
         return
 
-    payload = img_path.read_bytes()
+    asset_payloads = build_card_assets(img_path.read_bytes())
     pkpass_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}.pkpass"
     
-    total_steps = len(TARGET_ASSETS) + (len(CACHE_FILES) * 2) + 1
+    total_steps = len(asset_payloads) + (len(CACHE_FILES) * 2) + 1
     step = 0
 
-    for asset in TARGET_ASSETS:
+    for asset, payload in asset_payloads:
         step += 1
         print(json.dumps({
             "type": "progress",
