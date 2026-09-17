@@ -4,10 +4,13 @@ Backend engine for AirCard native macOS GUI app.
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
+import re
 import sys
+import zipfile
 from pathlib import Path
 
 # Augment PATH so bundled tools and system tools are always found
@@ -173,6 +176,130 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
     sys.stdout.flush()
 
 
+def cmd_inspect_passthm(passthm_path: str):
+    path = Path(passthm_path).expanduser()
+    if not path.is_file():
+        print(json.dumps({"ok": False, "error": f"File not found: {passthm_path}"}))
+        return
+    try:
+        with zipfile.ZipFile(path, "r") as z:
+            image_entries = [
+                n for n in z.namelist()
+                if not n.startswith("__MACOSX")
+                and not n.endswith("/")
+                and any(n.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg"))
+            ]
+            if not image_entries:
+                print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
+                return
+
+            keys_preview = {}
+            for entry in image_entries:
+                basename = Path(entry).name
+                m = re.search(r'^[a-zA-Z]+-([0-9*#])-?', basename)
+                digit = m.group(1) if m else None
+                if not digit:
+                    m2 = re.search(r'([0-9*#])', basename)
+                    if m2:
+                        digit = m2.group(1)
+                if digit and digit not in keys_preview:
+                    data = z.read(entry)
+                    b64 = base64.b64encode(data).decode("utf-8")
+                    mime = "image/png" if entry.lower().endswith(".png") else "image/jpeg"
+                    keys_preview[digit] = f"data:{mime};base64,{b64}"
+
+            detected_ver = "TelephonyUI-10"
+            for entry in image_entries:
+                low = entry.lower()
+                if "telephonyui-8" in low or "telephony-8" in low:
+                    detected_ver = "TelephonyUI-8"
+                    break
+                elif "telephonyui-9" in low or "telephony-9" in low:
+                    detected_ver = "TelephonyUI-9"
+                    break
+
+            print(json.dumps({
+                "ok": True,
+                "name": path.stem,
+                "detected_version": detected_ver,
+                "file_count": len(image_entries),
+                "keys_preview": keys_preview
+            }))
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+
+
+def cmd_flash_passthm(udid: str, passthm_path: str, telephony_ver: str = "TelephonyUI-10"):
+    path = Path(passthm_path).expanduser()
+    if not path.is_file():
+        print(json.dumps({"ok": False, "error": "Passcode theme file not found"}))
+        return
+
+    try:
+        with zipfile.ZipFile(path, "r") as z:
+            image_entries = [
+                n for n in z.namelist()
+                if not n.startswith("__MACOSX")
+                and not n.endswith("/")
+                and any(n.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg"))
+            ]
+            if not image_entries:
+                print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
+                return
+
+            target_dirs = [f"/var/mobile/Library/Caches/{telephony_ver}"]
+            if telephony_ver == "TelephonyUI-10":
+                target_dirs.append("/var/mobile/Library/Caches/TelephonyUI-9")
+
+            items_to_write = []
+            for entry in image_entries:
+                leaf = Path(entry).name
+                data = z.read(entry)
+                for tdir in target_dirs:
+                    items_to_write.append((tdir, leaf, data))
+                    if leaf.startswith("en-"):
+                        alt_leaf = "other" + leaf[2:]
+                        items_to_write.append((tdir, alt_leaf, data))
+                    elif leaf.startswith("other-"):
+                        alt_leaf = "en" + leaf[5:]
+                        items_to_write.append((tdir, alt_leaf, data))
+
+            total_steps = len(items_to_write)
+            step = 0
+
+            for tdir, leaf, payload in items_to_write:
+                step += 1
+                tdir_name = Path(tdir).name
+                print(json.dumps({
+                    "type": "progress",
+                    "step": step,
+                    "total": total_steps,
+                    "leaf": leaf,
+                    "message": f"Writing {leaf} ({tdir_name})..."
+                }))
+                sys.stdout.flush()
+
+                ok = write_file(udid, tdir, leaf, payload)
+                if not ok:
+                    print(json.dumps({
+                        "type": "warning",
+                        "leaf": leaf,
+                        "message": f"Could not write {leaf} to {tdir}"
+                    }))
+                    sys.stdout.flush()
+
+            print(json.dumps({
+                "type": "success",
+                "step": total_steps,
+                "total": total_steps,
+                "message": f"Passcode theme '{path.stem}' successfully applied! Lock your iPhone to check."
+            }))
+            sys.stdout.flush()
+
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "No command provided"}))
@@ -189,6 +316,11 @@ def main():
         cmd_prepare_image(sys.argv[2], sys.argv[3])
     elif cmd == "--flash" and len(sys.argv) > 4:
         cmd_flash(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif cmd == "--inspect-passthm" and len(sys.argv) > 2:
+        cmd_inspect_passthm(sys.argv[2])
+    elif cmd == "--flash-passthm" and len(sys.argv) > 3:
+        t_ver = sys.argv[4] if len(sys.argv) > 4 else "TelephonyUI-10"
+        cmd_flash_passthm(sys.argv[2], sys.argv[3], t_ver)
     else:
         print(json.dumps({"error": f"Unknown command: {cmd}"}))
         sys.exit(1)

@@ -28,10 +28,30 @@ struct CardItem: Identifiable, Hashable {
     }
 }
 
+enum AppTab: String, CaseIterable, Identifiable {
+    case walletCards = "Apple Wallet"
+    case passcodeThemes = "Passcode (.passthm)"
+    var id: String { rawValue }
+}
+
+struct PasscodeThemeInfo: Identifiable {
+    var id: String { filePath }
+    let name: String
+    let filePath: String
+    let detectedVersion: String
+    let fileCount: Int
+    let keysPreview: [String: NSImage]
+}
+
 // MARK: - View Model
 
 @MainActor
 class AppViewModel: ObservableObject {
+    @Published var selectedTab: AppTab = .walletCards
+    @Published var loadedPasscodeTheme: PasscodeThemeInfo? = nil
+    @Published var isInspectingTheme = false
+    @Published var targetTelephonyVersion: String = "TelephonyUI-10"
+    
     @Published var device: DeviceInfo?
     @Published var isCheckingDevice = false
     @Published var isScanningCards = false
@@ -458,6 +478,7 @@ class AppViewModel: ObservableObject {
                 
                 await MainActor.run {
                     self.statusText = "[\(idx + 1)/\(selectedCardsWithSkin.count)] Preparing skin for \(card.id.prefix(10))..."
+                    self.progress = (Double(idx) + 0.05) / totalCards
                     self.log("Flashing card [\(idx + 1)/\(selectedCardsWithSkin.count)]: \(card.id)")
                 }
                 
@@ -488,17 +509,56 @@ class AppViewModel: ObservableObject {
                 try? flashProcess.run()
                 
                 let handle = pipe.fileHandleForReading
-                while flashProcess.isRunning {
-                    let data = handle.availableData
-                    if data.isEmpty { usleep(100000); continue }
-                    if let text = String(data: data, encoding: .utf8) {
-                        for line in text.components(separatedBy: .newlines) where !line.isEmpty {
-                            if let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                                let msg = json["message"] as? String {
-                                await MainActor.run { self.log("  \(msg)") }
+                var lineBuffer = ""
+                
+                let handleJSONLine: (String) async -> Void = { line in
+                    guard !line.isEmpty,
+                          let lineData = line.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                          let msg = json["message"] as? String else { return }
+                    
+                    let step = (json["step"] as? NSNumber)?.doubleValue
+                    let total = (json["total"] as? NSNumber)?.doubleValue
+                    
+                    await MainActor.run {
+                        if let step = step, let total = total, total > 0 {
+                            let subProgress = step / total
+                            let currentProgress = (Double(idx) + subProgress) / totalCards
+                            self.progress = min(currentProgress, 1.0)
+                        }
+                        self.statusText = "[\(idx + 1)/\(selectedCardsWithSkin.count)] \(msg)"
+                        self.log("  \(msg)")
+                    }
+                }
+                
+                let processChunk: (Data) async -> Void = { data in
+                    guard let text = String(data: data, encoding: .utf8) else { return }
+                    lineBuffer.append(text)
+                    let parts = lineBuffer.components(separatedBy: .newlines)
+                    if parts.count > 1 {
+                        for line in parts.dropLast() {
+                            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty {
+                                await handleJSONLine(trimmed)
                             }
                         }
+                        lineBuffer = parts.last ?? ""
                     }
+                }
+                
+                while flashProcess.isRunning {
+                    let data = handle.availableData
+                    if data.isEmpty { usleep(50000); continue }
+                    await processChunk(data)
+                }
+                
+                let remainingData = handle.readDataToEndOfFile()
+                if !remainingData.isEmpty {
+                    await processChunk(remainingData)
+                }
+                let finalLine = lineBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !finalLine.isEmpty {
+                    await handleJSONLine(finalLine)
                 }
                 flashProcess.waitUntilExit()
                 
@@ -512,6 +572,154 @@ class AppViewModel: ObservableObject {
                 self.statusText = "Complete! All cards updated."
                 self.showSuccessAlert = true
                 self.log("Skins successfully applied to all selected cards!")
+            }
+        }
+    }
+    
+    // MARK: - Passcode Theme (.passthm) Handlers
+    
+    func inspectPasscodeTheme(url: URL) {
+        isInspectingTheme = true
+        let scriptDir = self.scriptDir
+        Task.detached {
+            let proc = Process()
+            proc.executableURL = AppViewModel.pythonExecutableURL
+            proc.environment = AppViewModel.processEnvironment
+            proc.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
+            proc.arguments = ["aircard_backend.py", "--inspect-passthm", url.path]
+            
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = Pipe()
+            try? proc.run()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let ok = json["ok"] as? Bool, ok {
+                let name = json["name"] as? String ?? url.deletingPathExtension().lastPathComponent
+                let detectedVersion = json["detected_version"] as? String ?? "TelephonyUI-10"
+                let fileCount = json["file_count"] as? Int ?? 0
+                var previews: [String: NSImage] = [:]
+                if let keysDict = json["keys_preview"] as? [String: String] {
+                    for (digit, dataUri) in keysDict {
+                        if let commaIdx = dataUri.firstIndex(of: ",") {
+                            let b64 = String(dataUri[dataUri.index(after: commaIdx)...])
+                            if let imgData = Data(base64Encoded: b64), let nsImg = NSImage(data: imgData) {
+                                previews[digit] = nsImg
+                            }
+                        }
+                    }
+                }
+                let themeInfo = PasscodeThemeInfo(
+                    name: name,
+                    filePath: url.path,
+                    detectedVersion: detectedVersion,
+                    fileCount: fileCount,
+                    keysPreview: previews
+                )
+                await MainActor.run {
+                    self.loadedPasscodeTheme = themeInfo
+                    self.isInspectingTheme = false
+                    self.statusText = "Loaded passcode theme '\(name)' (\(fileCount) assets)"
+                    self.log("Loaded .passthm: \(name) [\(detectedVersion)] with \(fileCount) image assets")
+                }
+            } else {
+                await MainActor.run {
+                    self.isInspectingTheme = false
+                    self.errorMessage = "Failed to inspect .passthm file"
+                }
+            }
+        }
+    }
+    
+    func flashPasscodeTheme() {
+        guard let theme = loadedPasscodeTheme else { return }
+        guard let dev = device, dev.connected, let udid = dev.udid else {
+            errorMessage = "Please connect and trust your iPhone first."
+            return
+        }
+        
+        isFlashing = true
+        showLogs = true
+        progress = 0.0
+        statusText = "Starting passcode theme flash..."
+        log("Flashing passcode theme '\(theme.name)' to device...")
+        let scriptDir = self.scriptDir
+        let targetVer = self.targetTelephonyVersion
+        
+        Task.detached {
+            let proc = Process()
+            proc.executableURL = AppViewModel.pythonExecutableURL
+            proc.environment = AppViewModel.processEnvironment
+            proc.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
+            proc.arguments = ["aircard_backend.py", "--flash-passthm", udid, theme.filePath, targetVer]
+            
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = Pipe()
+            try? proc.run()
+            
+            let handle = pipe.fileHandleForReading
+            var lineBuffer = ""
+            
+            let handleJSONLine: (String) async -> Void = { line in
+                guard !line.isEmpty,
+                      let lineData = line.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                      let msg = json["message"] as? String else { return }
+                
+                let step = (json["step"] as? NSNumber)?.doubleValue
+                let total = (json["total"] as? NSNumber)?.doubleValue
+                
+                await MainActor.run {
+                    if let step = step, let total = total, total > 0 {
+                        self.progress = min(step / total, 1.0)
+                    }
+                    self.statusText = msg
+                    self.log("  \(msg)")
+                }
+            }
+            
+            let processChunk: (Data) async -> Void = { data in
+                guard let chunkStr = String(data: data, encoding: .utf8) else { return }
+                lineBuffer += chunkStr
+                let parts = lineBuffer.components(separatedBy: .newlines)
+                if parts.count > 1 {
+                    for line in parts.dropLast() {
+                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            await handleJSONLine(trimmed)
+                        }
+                    }
+                    lineBuffer = parts.last ?? ""
+                }
+            }
+            
+            while proc.isRunning {
+                let data = handle.availableData
+                if data.isEmpty { usleep(50000); continue }
+                await processChunk(data)
+            }
+            
+            let remaining = handle.readDataToEndOfFile()
+            if !remaining.isEmpty {
+                await processChunk(remaining)
+            }
+            let finalLine = lineBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !finalLine.isEmpty {
+                await handleJSONLine(finalLine)
+            }
+            
+            proc.waitUntilExit()
+            
+            await MainActor.run {
+                self.isFlashing = false
+                self.progress = 1.0
+                self.statusText = "Passcode theme applied successfully!"
+                self.showSuccessAlert = true
+                self.log("Passcode theme '\(theme.name)' successfully flashed!")
             }
         }
     }
@@ -745,43 +953,57 @@ struct ContentView: View {
             
             Divider()
             
-            // 2. Control Toolbar
-            toolbarView
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(Color(NSColor.windowBackgroundColor))
-            
-            Divider()
-            
-            // 3. Live Scanner Notice Banner (if active)
-            if vm.isScanningCards {
-                scanningNoticeBanner
-            }
-            
-            // 4. Main Scrollable Workspace
-            ScrollView {
-                if vm.cards.isEmpty {
-                    emptyStateView
-                        .padding(.top, 40)
-                } else {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 310, maximum: 360), spacing: 20)],
-                        spacing: 20
-                    ) {
-                        ForEach(Array(vm.cards.indices), id: \.self) { idx in
-                            WalletCardView(
-                                card: $vm.cards[idx],
-                                cardIndex: idx,
-                                onPickImage: { openCardImagePicker(for: vm.cards[idx].id) },
-                                onClearImage: { vm.clearCardImage(for: vm.cards[idx].id) },
-                                onDelete: { vm.deleteCard(id: vm.cards[idx].id) }
-                            )
-                        }
-                    }
-                    .padding(20)
+            // 2. Control Toolbar (for Wallet Cards)
+            if vm.selectedTab == .walletCards {
+                toolbarView
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color(NSColor.windowBackgroundColor))
+                
+                Divider()
+                
+                // 3. Live Scanner Notice Banner (if active)
+                if vm.isScanningCards {
+                    scanningNoticeBanner
                 }
+            } else {
+                passcodeToolbarView
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color(NSColor.windowBackgroundColor))
+                
+                Divider()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            
+            // 4. Main Workspace
+            if vm.selectedTab == .walletCards {
+                ScrollView {
+                    if vm.cards.isEmpty {
+                        emptyStateView
+                            .padding(.top, 40)
+                    } else {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 310, maximum: 360), spacing: 20)],
+                            spacing: 20
+                        ) {
+                            ForEach(Array(vm.cards.indices), id: \.self) { idx in
+                                WalletCardView(
+                                    card: $vm.cards[idx],
+                                    cardIndex: idx,
+                                    onPickImage: { openCardImagePicker(for: vm.cards[idx].id) },
+                                    onClearImage: { vm.clearCardImage(for: vm.cards[idx].id) },
+                                    onDelete: { vm.deleteCard(id: vm.cards[idx].id) }
+                                )
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                passcodeThemeWorkspaceView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             
             // 5. Collapsible Activity Console (if open or flashing)
             if vm.showLogs {
@@ -801,7 +1023,11 @@ struct ContentView: View {
         .alert("Success!", isPresented: $vm.showSuccessAlert) {
             Button("OK") {}
         } message: {
-            Text("Skins successfully applied to all selected cards!\n\nPlease force-close the Wallet app on your iPhone (or reboot) to see your new designs.")
+            if vm.selectedTab == .passcodeThemes {
+                Text("Passcode theme successfully applied!\n\nLock your iPhone (and make sure Bold Text is turned OFF in Settings) to see your new passcode keypad.")
+            } else {
+                Text("Skins successfully applied to all selected cards!\n\nPlease force-close the Wallet app on your iPhone (or reboot) to see your new designs.")
+            }
         }
         .sheet(isPresented: $showCredits) {
             creditsSheet
@@ -820,13 +1046,33 @@ struct ContentView: View {
                 .foregroundColor(.accentColor)
             
             VStack(alignment: .leading, spacing: 2) {
-                Text("AirCard")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                Text("Apple Wallet Card Skinner")
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("AirCard")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Text("v1.1")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.15))
+                        .foregroundColor(.accentColor)
+                        .clipShape(Capsule())
+                }
+                Text("Wallet Cards & Passcode Themes")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            
+            Spacer()
+            
+            // Tab Switcher
+            Picker("", selection: $vm.selectedTab) {
+                ForEach(AppTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 290)
             
             Spacer()
             
@@ -1021,6 +1267,255 @@ struct ContentView: View {
         .padding(40)
     }
     
+    // MARK: - Passcode Views
+    
+    private var passcodeToolbarView: some View {
+        HStack(spacing: 12) {
+            Button(action: { openPasscodeThemePicker() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.badge.plus")
+                    Text("Choose .passthm File")
+                        .fontWeight(.semibold)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.accentColor)
+            
+            if vm.loadedPasscodeTheme != nil {
+                Button(action: { vm.loadedPasscodeTheme = nil }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                        Text("Clear Theme")
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            
+            Spacer()
+            
+            // Target Version Picker
+            HStack(spacing: 6) {
+                Text("Target:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Picker("", selection: $vm.targetTelephonyVersion) {
+                    Text("TelephonyUI-10 (iOS 18+)").tag("TelephonyUI-10")
+                    Text("TelephonyUI-9 (iOS 16–17)").tag("TelephonyUI-9")
+                }
+                .pickerStyle(.menu)
+                .frame(width: 200)
+            }
+        }
+    }
+    
+    private var passcodeThemeWorkspaceView: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Loaded Theme Banner or Drop Target
+                if let theme = vm.loadedPasscodeTheme {
+                    HStack(spacing: 16) {
+                        Image(systemName: "lock.square.stack.fill")
+                            .font(.system(size: 34))
+                            .foregroundColor(.purple)
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(theme.name)
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                
+                                Text(theme.detectedVersion)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.purple.opacity(0.15))
+                                    .foregroundColor(.purple)
+                                    .cornerRadius(6)
+                            }
+                            
+                            Text("\(theme.fileCount) artwork assets loaded · Ready to flash to iPhone")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("Change...") {
+                            openPasscodeThemePicker()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(NSColor.controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 24)
+                } else {
+                    // Empty Drop Target
+                    VStack(spacing: 12) {
+                        Image(systemName: "square.and.arrow.down.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.accentColor.opacity(0.8))
+                        
+                        Text("Drag & Drop your .passthm file here")
+                            .font(.headline)
+                        
+                        Text("Supports .passthm, .passtheme, or .zip passcode themes from Cowabunga / TrollTools / Nugget")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Button("Choose .passthm File...") {
+                            openPasscodeThemePicker()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [8]))
+                            .background(Color(NSColor.controlBackgroundColor).opacity(0.3).cornerRadius(16))
+                    )
+                    .padding(.horizontal, 24)
+                }
+                
+                // Keypad Interactive Preview (3x4 Phone Passcode Style)
+                VStack(spacing: 14) {
+                    HStack {
+                        Text("Lock Screen Keypad Preview")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if vm.loadedPasscodeTheme != nil {
+                            Text("Custom Artwork Loaded")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.green)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    
+                    passcodeKeypadGrid
+                }
+                .padding(20)
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 1)
+                )
+                .padding(.horizontal, 24)
+                
+                // Important Warning Box
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.title3)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Important Requirement: Turn OFF Bold Text")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                        Text("On your iPhone, navigate to **Settings ➔ Display & Brightness** and ensure **Bold Text is turned OFF**. Otherwise, iOS overrides cached keypad graphics with standard vector fonts.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.orange.opacity(0.1)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.orange.opacity(0.3), lineWidth: 1))
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+            }
+            .padding(.top, 16)
+        }
+        .onDrop(of: [UTType.fileURL, UTType.data], isTargeted: nil) { providers in
+            if let provider = providers.first {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        Task { @MainActor in
+                            vm.inspectPasscodeTheme(url: url)
+                        }
+                    } else if let url = item as? URL {
+                        Task { @MainActor in
+                            vm.inspectPasscodeTheme(url: url)
+                        }
+                    }
+                }
+                return true
+            }
+            return false
+        }
+    }
+    
+    private var passcodeKeypadGrid: some View {
+        let keysLayout: [[(digit: String, letters: String)]] = [
+            [("1", ""), ("2", "A B C"), ("3", "D E F")],
+            [("4", "G H I"), ("5", "J K L"), ("6", "M N O")],
+            [("7", "P Q R S"), ("8", "T U V"), ("9", "W X Y Z")],
+            [("", ""), ("0", "+"), ("", "")]
+        ]
+        
+        return VStack(spacing: 12) {
+            ForEach(0..<keysLayout.count, id: \.self) { rowIdx in
+                HStack(spacing: 22) {
+                    ForEach(0..<keysLayout[rowIdx].count, id: \.self) { colIdx in
+                        let item = keysLayout[rowIdx][colIdx]
+                        if item.digit.isEmpty {
+                            Color.clear
+                                .frame(width: 68, height: 68)
+                        } else {
+                            passcodeKeyView(digit: item.digit, letters: item.letters)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func passcodeKeyView(digit: String, letters: String) -> some View {
+        let customImage = vm.loadedPasscodeTheme?.keysPreview[digit]
+        
+        return ZStack {
+            if let img = customImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 68, height: 68)
+                    .clipShape(Circle())
+            } else {
+                Circle()
+                    .fill(Color(NSColor.controlBackgroundColor))
+                    .frame(width: 68, height: 68)
+                    .overlay(Circle().stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                
+                VStack(spacing: 1) {
+                    Text(digit)
+                        .font(.system(size: 26, weight: .light))
+                    if !letters.isEmpty {
+                        Text(letters)
+                            .font(.system(size: 9, weight: .semibold))
+                            .tracking(1)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .frame(width: 68, height: 68)
+        .shadow(color: Color.black.opacity(0.08), radius: 2, x: 0, y: 1)
+    }
+    
     private var activityLogView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -1068,17 +1563,38 @@ struct ContentView: View {
             if vm.isFlashing || vm.progress > 0 {
                 ProgressView(value: vm.progress, total: 1.0)
                     .progressViewStyle(.linear)
+                    .animation(.easeInOut(duration: 0.2), value: vm.progress)
             }
             
             HStack(spacing: 16) {
                 // Left Status Text
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(vm.statusText)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
+                    HStack(spacing: 6) {
+                        Text(vm.statusText)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        
+                        if vm.isFlashing || vm.progress > 0 {
+                            Text("\(Int(min(max(vm.progress, 0.0), 1.0) * 100))%")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
                     
-                    if !vm.cards.isEmpty {
+                    if vm.selectedTab == .passcodeThemes {
+                        if let theme = vm.loadedPasscodeTheme {
+                            Text("\(theme.fileCount) assets ready · Target: \(vm.targetTelephonyVersion)")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("No .passthm loaded · Select a theme package to flash")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    } else if !vm.cards.isEmpty {
                         Text("\(vm.cards.filter { $0.isSelected }.count) of \(vm.cards.count) cards selected · \(readyToFlashCount) ready to flash")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
@@ -1100,23 +1616,43 @@ struct ContentView: View {
                 .controlSize(.small)
                 
                 // Apply / Flash Button
-                Button(action: { vm.applySkin() }) {
-                    HStack(spacing: 6) {
-                        if vm.isFlashing {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                        } else {
-                            Image(systemName: "sparkles")
+                if vm.selectedTab == .passcodeThemes {
+                    Button(action: { vm.flashPasscodeTheme() }) {
+                        HStack(spacing: 6) {
+                            if vm.isFlashing {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "lock.shield.fill")
+                            }
+                            Text(vm.isFlashing ? "Flashing Passcode..." : "Flash Passcode Theme")
+                                .fontWeight(.semibold)
                         }
-                        Text(vm.isFlashing ? "Flashing Cards..." : (readyToFlashCount > 0 ? "Flash Skins (\(readyToFlashCount) Cards)" : "Flash Skins"))
-                            .fontWeight(.semibold)
+                        .padding(.horizontal, 8)
                     }
-                    .padding(.horizontal, 8)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .controlSize(.regular)
+                    .disabled(vm.loadedPasscodeTheme == nil || vm.isFlashing || vm.device?.connected != true)
+                } else {
+                    Button(action: { vm.applySkin() }) {
+                        HStack(spacing: 6) {
+                            if vm.isFlashing {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "sparkles")
+                            }
+                            Text(vm.isFlashing ? "Flashing Cards..." : (readyToFlashCount > 0 ? "Flash Skins (\(readyToFlashCount) Cards)" : "Flash Skins"))
+                                .fontWeight(.semibold)
+                        }
+                        .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .controlSize(.regular)
+                    .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .controlSize(.regular)
-                .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true)
             }
             
             // Subtle Footer Credits
@@ -1258,6 +1794,21 @@ struct ContentView: View {
             for card in vm.cards where card.isSelected {
                 vm.setCardImage(for: card.id, url: url)
             }
+        }
+    }
+    
+    private func openPasscodeThemePicker() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "passthm") ?? .data,
+            UTType(filenameExtension: "passtheme") ?? .data,
+            .zip
+        ]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a .passthm passcode theme package..."
+        if panel.runModal() == .OK, let url = panel.url {
+            vm.inspectPasscodeTheme(url: url)
         }
     }
 }

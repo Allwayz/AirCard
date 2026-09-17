@@ -19,6 +19,7 @@
    No Homebrew, Python packages, or external tools required!
 
 4. HOW TO USE:
+   [Apple Wallet Cards]
    - Connect your iPhone via USB cable and tap "Trust this Computer".
    - Open AirCard (the device status badge will turn green).
    - Click "Scan Cards".
@@ -26,6 +27,14 @@
    - Assign a custom skin image (click or drag & drop onto the card).
    - Click "Flash Skins".
    - Force-close the Wallet app on your iPhone to see your new designs.
+
+   [Passcode Themes (.passthm)]
+   - Switch to the "Passcode Themes" tab.
+   - Drag & drop a .passthm file (or select one via file picker).
+   - Preview the keypad artwork on the interactive mockup.
+   - Click "Apply Passcode Theme".
+   - Restart your iPhone.
+   * NOTE: Make sure "Bold Text" is turned OFF in iPhone Settings -> Display & Brightness!
 
 ============================================================
 Developed by @mak5er & @Lumid-Off
