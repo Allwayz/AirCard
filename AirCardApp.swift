@@ -220,23 +220,26 @@ class KeypadSlicer {
     static func cropToCircle(
         image: NSImage,
         targetSize: CGSize = CGSize(width: 225, height: 225),
-        circleDiameter: CGFloat = 222.0
+        circleDiameter: CGFloat = 222.0,
+        zoom: Double = 1.0,
+        offset: CGPoint = .zero
     ) -> NSImage? {
         guard let cgImg = cgImage(from: image) else { return nil }
         let imgW = CGFloat(cgImg.width)
         let imgH = CGFloat(cgImg.height)
         guard imgW > 0 && imgH > 0 else { return nil }
         
-        // Scale image to fill the circle area (222px within 225px @3x canvas)
-        let baseScale = max(circleDiameter / imgW, circleDiameter / imgH)
+        // Scale image to fill the circle area with zoom
+        let baseScale = max(circleDiameter / imgW, circleDiameter / imgH) * CGFloat(max(0.1, zoom))
         let scaledW = imgW * baseScale
         let scaledH = imgH * baseScale
         
         let circleX = (targetSize.width - circleDiameter) / 2.0
         let circleY = (targetSize.height - circleDiameter) / 2.0
         
-        let destX = circleX + (circleDiameter - scaledW) / 2.0
-        let destY = circleY + (circleDiameter - scaledH) / 2.0
+        // User pan offset in SwiftUI points (multiplied by 3 for @3x canvas)
+        let destX = circleX + (circleDiameter - scaledW) / 2.0 + offset.x * 3.0
+        let destY = circleY + (circleDiameter - scaledH) / 2.0 + offset.y * 3.0
         let destCGY = targetSize.height - destY - scaledH
         
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -377,6 +380,10 @@ class AppViewModel: ObservableObject {
     @Published var creatorMaskToCircles: Bool = false
     @Published var creatorCustomKeys: [String: NSImage] = [:]
     @Published var creatorSlicedKeys: [String: NSImage] = [:]
+    @Published var creatorRawIndividualImages: [String: NSImage] = [:]
+    @Published var creatorIndividualOffsets: [String: CGPoint] = [:]
+    @Published var creatorIndividualZooms: [String: Double] = [:]
+    @Published var selectedKeyDigit: String? = nil
     
     @Published var device: DeviceInfo?
     @Published var isCheckingDevice = false
@@ -1085,36 +1092,80 @@ class AppViewModel: ObservableObject {
     }
     
     func setIndividualKey(digit: String, image: NSImage) {
-        if let cropped = KeypadSlicer.cropToCircle(image: image) {
+        creatorRawIndividualImages[digit] = image
+        creatorIndividualOffsets[digit] = .zero
+        creatorIndividualZooms[digit] = 1.0
+        selectedKeyDigit = digit
+        updateIndividualKey(digit: digit)
+        statusText = "Updated key \(digit) · Drag on dialer to reposition or use zoom slider"
+    }
+    
+    func updateIndividualKey(digit: String) {
+        guard let raw = creatorRawIndividualImages[digit] else { return }
+        let offset = creatorIndividualOffsets[digit] ?? .zero
+        let zoom = creatorIndividualZooms[digit] ?? 1.0
+        if let cropped = KeypadSlicer.cropToCircle(
+            image: raw,
+            targetSize: CGSize(width: 225, height: 225),
+            circleDiameter: 222.0,
+            zoom: zoom,
+            offset: offset
+        ) {
             creatorCustomKeys[digit] = cropped
-            statusText = "Updated key \(digit)"
         }
     }
     
     func clearIndividualKey(digit: String) {
         creatorCustomKeys.removeValue(forKey: digit)
+        creatorRawIndividualImages.removeValue(forKey: digit)
+        creatorIndividualOffsets.removeValue(forKey: digit)
+        creatorIndividualZooms.removeValue(forKey: digit)
+        if selectedKeyDigit == digit {
+            selectedKeyDigit = nil
+        }
         statusText = "Cleared key \(digit)"
     }
     
+    func clearAllIndividualKeys() {
+        creatorCustomKeys.removeAll()
+        creatorRawIndividualImages.removeAll()
+        creatorIndividualOffsets.removeAll()
+        creatorIndividualZooms.removeAll()
+        selectedKeyDigit = nil
+        statusText = "Cleared all custom keys"
+    }
+    
     func adoptPosterSlicesToIndividualKeys() {
-        if creatorCustomKeys.isEmpty && !creatorSlicedKeys.isEmpty {
-            creatorCustomKeys = creatorSlicedKeys
-        } else {
-            for (k, v) in creatorSlicedKeys {
-                if creatorCustomKeys[k] == nil {
-                    creatorCustomKeys[k] = v
-                }
-            }
+        for (k, v) in creatorSlicedKeys {
+            creatorCustomKeys[k] = v
+            creatorRawIndividualImages[k] = v
+            creatorIndividualOffsets[k] = .zero
+            creatorIndividualZooms[k] = 1.0
         }
         statusText = "Adopted poster slices to individual keys"
+    }
+    
+    func editLoadedThemeInCreator() {
+        guard let theme = loadedPasscodeTheme else { return }
+        for (digit, img) in theme.keysPreview {
+            creatorCustomKeys[digit] = img
+            creatorRawIndividualImages[digit] = img
+            creatorIndividualOffsets[digit] = .zero
+            creatorIndividualZooms[digit] = 1.0
+        }
+        selectedKeyDigit = nil
+        creatorSubMode = .individualKeys
+        passcodeTabMode = .themeCreator
+        statusText = "Loaded '\(theme.name)' into Theme Creator (\(theme.keysPreview.count) keys ready to edit)"
+        log("Imported theme '\(theme.name)' into Creator for custom editing")
     }
     
     func clearCreator() {
         creatorPosterImage = nil
         creatorPosterZoom = 1.0
         creatorPosterOffset = .zero
-        creatorCustomKeys = [:]
-        creatorSlicedKeys = [:]
+        creatorSlicedKeys.removeAll()
+        clearAllIndividualKeys()
         statusText = "Theme Creator reset"
     }
     
@@ -1383,6 +1434,7 @@ struct ContentView: View {
     @StateObject private var vm = AppViewModel()
     @State private var showCredits = false
     @State private var dragOffsetStart: CGPoint = .zero
+    @State private var dragKeyStartOffsets: [String: CGPoint] = [:]
     @State private var isTargetedPoster = false
     @State private var isTargetedTheme = false
     
@@ -1911,17 +1963,24 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                     
                     HStack(spacing: 8) {
+                        Button(action: { vm.editLoadedThemeInCreator() }) {
+                            Label("Edit in Creator", systemImage: "pencil.and.outline")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .controlSize(.regular)
+                        
                         Button("Change...") {
                             openPasscodeThemePicker()
                         }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .controlSize(.regular)
                         
                         Button("Clear") {
                             vm.loadedPasscodeTheme = nil
                         }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .controlSize(.regular)
                     }
                 }
                 .padding(12)
@@ -2240,13 +2299,107 @@ struct ContentView: View {
             } else {
                 // Individual Keys Mode Controls
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Individual Keys")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
+                    HStack {
+                        Text("Individual Keys")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if let sel = vm.selectedKeyDigit {
+                            Button("Deselect Key \(sel)") {
+                                vm.selectedKeyDigit = nil
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption2)
+                        }
+                    }
                     
-                    Text("Click any key on the dialer preview to assign a custom image or drop files onto it.")
-                        .font(.caption)
+                    if let selDigit = vm.selectedKeyDigit, vm.creatorRawIndividualImages[selDigit] != nil || vm.creatorCustomKeys[selDigit] != nil {
+                        // Per-key framing controls
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Key \(selDigit) Framing", systemImage: "crop")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.purple)
+                                Spacer()
+                                Button("Reset") {
+                                    withAnimation(.spring()) {
+                                        vm.creatorIndividualOffsets[selDigit] = .zero
+                                        vm.creatorIndividualZooms[selDigit] = 1.0
+                                        dragKeyStartOffsets[selDigit] = .zero
+                                        vm.updateIndividualKey(digit: selDigit)
+                                    }
+                                }
+                                .buttonStyle(.link)
+                                .font(.caption2)
+                            }
+                            
+                            // Zoom Slider for the selected key
+                            let zoomVal = vm.creatorIndividualZooms[selDigit] ?? 1.0
+                            HStack(spacing: 8) {
+                                Image(systemName: "minus.magnifyingglass")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                                
+                                Slider(
+                                    value: Binding(
+                                        get: { vm.creatorIndividualZooms[selDigit] ?? 1.0 },
+                                        set: { newVal in
+                                            vm.creatorIndividualZooms[selDigit] = newVal
+                                            vm.updateIndividualKey(digit: selDigit)
+                                        }
+                                    ),
+                                    in: 0.5...3.0,
+                                    step: 0.05
+                                )
+                                
+                                Image(systemName: "plus.magnifyingglass")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                                
+                                Text(String(format: "%.1fx", zoomVal))
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .frame(width: 32, alignment: .trailing)
+                            }
+                            
+                            HStack(spacing: 6) {
+                                Image(systemName: "hand.draw")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption2)
+                                Text("Drag Key \(selDigit) on dialer preview to reposition")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack(spacing: 8) {
+                                Button("Change Image...") {
+                                    openIndividualKeyPicker(for: selDigit)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                
+                                Button("Remove") {
+                                    vm.clearIndividualKey(digit: selDigit)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            .padding(.top, 2)
+                        }
+                        .padding(10)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.purple.opacity(0.35), lineWidth: 1)
+                        )
+                        
+                        Divider()
+                    }
+                    
+                    Text("Click any key on the dialer to select it, pan the image, adjust zoom, or drop files.")
+                        .font(.caption2)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     
@@ -2258,20 +2411,22 @@ struct ContentView: View {
                             .fontWeight(.medium)
                     }
                     
-                    if !vm.creatorSlicedKeys.isEmpty {
-                        Button("Fill from Poster Slices") {
-                            vm.adoptPosterSlicesToIndividualKeys()
+                    HStack(spacing: 8) {
+                        if !vm.creatorSlicedKeys.isEmpty {
+                            Button("Fill from Poster") {
+                                vm.adoptPosterSlicesToIndividualKeys()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+                        }
+                        
+                        Button("Clear All Keys") {
+                            vm.clearAllIndividualKeys()
                         }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .controlSize(.regular)
+                        .disabled(vm.creatorCustomKeys.isEmpty)
                     }
-                    
-                    Button("Clear All Keys") {
-                        vm.creatorCustomKeys.removeAll()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(vm.creatorCustomKeys.isEmpty)
                 }
             }
         }
@@ -2382,6 +2537,7 @@ struct ContentView: View {
                 }
             } else {
                 // Individual Keys mode
+                let isSelected = (vm.selectedKeyDigit == btn.digit)
                 Circle()
                     .fill(Color.white.opacity(0.18))
                     .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
@@ -2394,8 +2550,9 @@ struct ContentView: View {
                 }
                 
                 Circle()
-                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    .stroke(isSelected ? Color.purple : Color.white.opacity(0.3), lineWidth: isSelected ? 2.5 : 1)
                     .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+                    .shadow(color: isSelected ? Color.purple.opacity(0.8) : Color.clear, radius: 4)
             }
             
             // Authentic Digits & Letters Typography
@@ -2413,9 +2570,34 @@ struct ContentView: View {
         }
         .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
         .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    if vm.creatorSubMode == .individualKeys && (vm.creatorRawIndividualImages[btn.digit] != nil || vm.creatorCustomKeys[btn.digit] != nil) {
+                        if vm.selectedKeyDigit != btn.digit {
+                            vm.selectedKeyDigit = btn.digit
+                        }
+                        let start = dragKeyStartOffsets[btn.digit] ?? (vm.creatorIndividualOffsets[btn.digit] ?? .zero)
+                        vm.creatorIndividualOffsets[btn.digit] = CGPoint(
+                            x: start.x + value.translation.width,
+                            y: start.y + value.translation.height
+                        )
+                        vm.updateIndividualKey(digit: btn.digit)
+                    }
+                }
+                .onEnded { _ in
+                    if let cur = vm.creatorIndividualOffsets[btn.digit] {
+                        dragKeyStartOffsets[btn.digit] = cur
+                    }
+                }
+        )
         .onTapGesture {
             if vm.creatorSubMode == .individualKeys {
-                openIndividualKeyPicker(for: btn.digit)
+                if customIndividualImage == nil && vm.creatorRawIndividualImages[btn.digit] == nil {
+                    openIndividualKeyPicker(for: btn.digit)
+                } else {
+                    vm.selectedKeyDigit = (vm.selectedKeyDigit == btn.digit ? nil : btn.digit)
+                }
             }
         }
         .contextMenu {
@@ -2424,6 +2606,12 @@ struct ContentView: View {
                     openIndividualKeyPicker(for: btn.digit)
                 }
                 if customIndividualImage != nil {
+                    Button("Reset Position & Zoom") {
+                        vm.creatorIndividualOffsets[btn.digit] = .zero
+                        vm.creatorIndividualZooms[btn.digit] = 1.0
+                        dragKeyStartOffsets[btn.digit] = .zero
+                        vm.updateIndividualKey(digit: btn.digit)
+                    }
                     Button("Clear Key \(btn.digit)") {
                         vm.clearIndividualKey(digit: btn.digit)
                     }
