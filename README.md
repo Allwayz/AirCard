@@ -1,6 +1,7 @@
 # AirCard 🎴
 
 > **Apple Wallet Card Skinner & Lockscreen Passcode Themer for iOS 18+ (No Jailbreak Required)**  
+> **Tested on iOS 27 release.**
 > Powered by the `airlift` AirTraffic sync exploit.
 
 ---
