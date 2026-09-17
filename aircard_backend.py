@@ -126,7 +126,7 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
     payload = img_path.read_bytes()
     pkpass_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}.pkpass"
     
-    total_steps = len(TARGET_ASSETS) + 2
+    total_steps = len(TARGET_ASSETS) + (len(CACHE_FILES) * 2) + 1
     step = 0
 
     for asset in TARGET_ASSETS:
@@ -151,18 +151,18 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
             sys.stdout.flush()
 
     # Clear cache
-    step += 1
-    print(json.dumps({
-        "type": "progress",
-        "card": card_hash,
-        "step": step,
-        "total": total_steps,
-        "message": "Invalidating system pass cache..."
-    }))
-    sys.stdout.flush()
     for ext in [".cache", ".pkcache"]:
         cache_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}{ext}"
         for leaf in CACHE_FILES:
+            step += 1
+            print(json.dumps({
+                "type": "progress",
+                "card": card_hash,
+                "step": step,
+                "total": total_steps,
+                "message": f"Invalidating cache ({leaf} in {ext})..."
+            }))
+            sys.stdout.flush()
             write_file(udid, cache_dir, leaf, b"corrupted")
 
     step += 1
@@ -176,40 +176,87 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
     sys.stdout.flush()
 
 
+KEYPAD_SUBTEXTS = {
+    "0": "+",
+    "1": "",
+    "2": "A B C",
+    "3": "D E F",
+    "4": "G H I",
+    "5": "J K L",
+    "6": "M N O",
+    "7": "P Q R S",
+    "8": "T U V",
+    "9": "W X Y Z",
+}
+
+
+def parse_passthm_archive(passthm_path: str, telephony_ver: str = "TelephonyUI-10") -> list[tuple[str, str, bytes]]:
+    path = Path(passthm_path).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"Passcode theme file not found: {passthm_path}")
+
+    with zipfile.ZipFile(path, "r") as z:
+        image_entries = [
+            n for n in z.namelist()
+            if not n.startswith("__MACOSX")
+            and not n.endswith("/")
+            and not Path(n).name.startswith(".")
+            and any(n.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg"))
+        ]
+        if not image_entries:
+            return []
+
+        target_dir = f"/var/mobile/Library/Caches/{telephony_ver}"
+        items_dict: dict[str, bytes] = {}
+
+        for entry in image_entries:
+            leaf = Path(entry).name
+            data = z.read(entry)
+            items_dict[leaf] = data
+
+            stem = Path(leaf).stem
+            stem_clean = re.sub(r"--?white$", "", stem, flags=re.IGNORECASE)
+            m = re.search(r"(?:^[a-zA-Z]+-)?([0-9*#])(?:-([^-\n]+))?", stem_clean)
+            digit = None
+            subtext = ""
+            if m:
+                digit = m.group(1)
+                if m.group(2):
+                    subtext = m.group(2).strip()
+            if not digit:
+                m2 = re.search(r"([0-9*#])", leaf)
+                if m2:
+                    digit = m2.group(1)
+
+            if digit:
+                if subtext:
+                    items_dict[f"en-{digit}-{subtext}--white.png"] = data
+                    items_dict[f"other-{digit}-{subtext}--white.png"] = data
+                items_dict[f"en-{digit}---white.png"] = data
+                items_dict[f"other-{digit}---white.png"] = data
+
+                std_subtext = KEYPAD_SUBTEXTS.get(digit)
+                if std_subtext:
+                    items_dict[f"en-{digit}-{std_subtext}--white.png"] = data
+                    items_dict[f"other-{digit}-{std_subtext}--white.png"] = data
+
+                if leaf.startswith("en-"):
+                    items_dict["other" + leaf[2:]] = data
+                elif leaf.startswith("other-"):
+                    items_dict["en" + leaf[5:]] = data
+
+        return [(target_dir, leaf, data) for leaf, data in items_dict.items()]
+
+
 def cmd_inspect_passthm(passthm_path: str):
     path = Path(passthm_path).expanduser()
     if not path.is_file():
         print(json.dumps({"ok": False, "error": f"File not found: {passthm_path}"}))
         return
     try:
+        detected_ver = "TelephonyUI-10"
         with zipfile.ZipFile(path, "r") as z:
-            image_entries = [
-                n for n in z.namelist()
-                if not n.startswith("__MACOSX")
-                and not n.endswith("/")
-                and any(n.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg"))
-            ]
-            if not image_entries:
-                print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
-                return
-
-            keys_preview = {}
-            for entry in image_entries:
-                basename = Path(entry).name
-                m = re.search(r'^[a-zA-Z]+-([0-9*#])-?', basename)
-                digit = m.group(1) if m else None
-                if not digit:
-                    m2 = re.search(r'([0-9*#])', basename)
-                    if m2:
-                        digit = m2.group(1)
-                if digit and digit not in keys_preview:
-                    data = z.read(entry)
-                    b64 = base64.b64encode(data).decode("utf-8")
-                    mime = "image/png" if entry.lower().endswith(".png") else "image/jpeg"
-                    keys_preview[digit] = f"data:{mime};base64,{b64}"
-
-            detected_ver = "TelephonyUI-10"
-            for entry in image_entries:
+            for entry in z.namelist():
                 low = entry.lower()
                 if "telephonyui-8" in low or "telephony-8" in low:
                     detected_ver = "TelephonyUI-8"
@@ -218,13 +265,31 @@ def cmd_inspect_passthm(passthm_path: str):
                     detected_ver = "TelephonyUI-9"
                     break
 
-            print(json.dumps({
-                "ok": True,
-                "name": path.stem,
-                "detected_version": detected_ver,
-                "file_count": len(image_entries),
-                "keys_preview": keys_preview
-            }))
+        items = parse_passthm_archive(str(path), detected_ver)
+        if not items:
+            print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
+            return
+
+        keys_preview = {}
+        for _, leaf, data in items:
+            m = re.search(r'^[a-zA-Z]+-([0-9*#])-?', leaf)
+            digit = m.group(1) if m else None
+            if not digit:
+                m2 = re.search(r'([0-9*#])', leaf)
+                if m2:
+                    digit = m2.group(1)
+            if digit and digit not in keys_preview:
+                b64 = base64.b64encode(data).decode("utf-8")
+                mime = "image/png" if leaf.lower().endswith(".png") else "image/jpeg"
+                keys_preview[digit] = f"data:{mime};base64,{b64}"
+
+        print(json.dumps({
+            "ok": True,
+            "name": path.stem,
+            "detected_version": detected_ver,
+            "file_count": len(items),
+            "keys_preview": keys_preview
+        }))
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e)}))
 
@@ -236,63 +301,42 @@ def cmd_flash_passthm(udid: str, passthm_path: str, telephony_ver: str = "Teleph
         return
 
     try:
-        with zipfile.ZipFile(path, "r") as z:
-            image_entries = [
-                n for n in z.namelist()
-                if not n.startswith("__MACOSX")
-                and not n.endswith("/")
-                and any(n.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg"))
-            ]
-            if not image_entries:
-                print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
-                return
+        items_to_write = parse_passthm_archive(str(path), telephony_ver)
+        if not items_to_write:
+            print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
+            return
 
-            target_dirs = [f"/var/mobile/Library/Caches/{telephony_ver}"]
+        total_steps = len(items_to_write)
+        step = 0
 
-            items_to_write = []
-            for entry in image_entries:
-                leaf = Path(entry).name
-                data = z.read(entry)
-                for tdir in target_dirs:
-                    items_to_write.append((tdir, leaf, data))
-                    if leaf.startswith("en-"):
-                        alt_leaf = "other" + leaf[2:]
-                        items_to_write.append((tdir, alt_leaf, data))
-                    elif leaf.startswith("other-"):
-                        alt_leaf = "en" + leaf[5:]
-                        items_to_write.append((tdir, alt_leaf, data))
+        for tdir, leaf, payload in items_to_write:
+            step += 1
+            tdir_name = Path(tdir).name
+            print(json.dumps({
+                "type": "progress",
+                "step": step,
+                "total": total_steps,
+                "leaf": leaf,
+                "message": f"Writing {leaf} ({tdir_name})..."
+            }))
+            sys.stdout.flush()
 
-            total_steps = len(items_to_write)
-            step = 0
-
-            for tdir, leaf, payload in items_to_write:
-                step += 1
-                tdir_name = Path(tdir).name
+            ok = write_file(udid, tdir, leaf, payload)
+            if not ok:
                 print(json.dumps({
-                    "type": "progress",
-                    "step": step,
-                    "total": total_steps,
+                    "type": "warning",
                     "leaf": leaf,
-                    "message": f"Writing {leaf} ({tdir_name})..."
+                    "message": f"Could not write {leaf} to {tdir}"
                 }))
                 sys.stdout.flush()
 
-                ok = write_file(udid, tdir, leaf, payload)
-                if not ok:
-                    print(json.dumps({
-                        "type": "warning",
-                        "leaf": leaf,
-                        "message": f"Could not write {leaf} to {tdir}"
-                    }))
-                    sys.stdout.flush()
-
-            print(json.dumps({
-                "type": "success",
-                "step": total_steps,
-                "total": total_steps,
-                "message": f"Passcode theme '{path.stem}' successfully applied! Lock your iPhone to check."
-            }))
-            sys.stdout.flush()
+        print(json.dumps({
+            "type": "success",
+            "step": total_steps,
+            "total": total_steps,
+            "message": f"Passcode theme '{path.stem}' successfully applied! Lock your iPhone to check."
+        }))
+        sys.stdout.flush()
 
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e)}))
@@ -304,19 +348,20 @@ def main():
         sys.exit(1)
 
     cmd = sys.argv[1]
-    if cmd == "--device":
+    norm_cmd = cmd.lstrip("-")
+    if norm_cmd == "device":
         cmd_device()
-    elif cmd == "--cards":
+    elif norm_cmd == "cards":
         cmd_get_saved_cards()
-    elif cmd == "--save-cards" and len(sys.argv) > 2:
+    elif norm_cmd == "save-cards" and len(sys.argv) > 2:
         cmd_save_cards(sys.argv[2])
-    elif cmd == "--prepare-image" and len(sys.argv) > 3:
+    elif norm_cmd == "prepare-image" and len(sys.argv) > 3:
         cmd_prepare_image(sys.argv[2], sys.argv[3])
-    elif cmd == "--flash" and len(sys.argv) > 4:
+    elif norm_cmd == "flash" and len(sys.argv) > 4:
         cmd_flash(sys.argv[2], sys.argv[3], sys.argv[4])
-    elif cmd == "--inspect-passthm" and len(sys.argv) > 2:
+    elif norm_cmd == "inspect-passthm" and len(sys.argv) > 2:
         cmd_inspect_passthm(sys.argv[2])
-    elif cmd == "--flash-passthm" and len(sys.argv) > 3:
+    elif norm_cmd == "flash-passthm" and len(sys.argv) > 3:
         t_ver = sys.argv[4] if len(sys.argv) > 4 else "TelephonyUI-10"
         cmd_flash_passthm(sys.argv[2], sys.argv[3], t_ver)
     else:
