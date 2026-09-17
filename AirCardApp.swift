@@ -220,14 +220,14 @@ class KeypadSlicer {
     static func cropToCircle(
         image: NSImage,
         targetSize: CGSize = CGSize(width: 225, height: 225),
-        circleDiameter: CGFloat = 210.0
+        circleDiameter: CGFloat = 218.0
     ) -> NSImage? {
         guard let cgImg = cgImage(from: image) else { return nil }
         let imgW = CGFloat(cgImg.width)
         let imgH = CGFloat(cgImg.height)
         guard imgW > 0 && imgH > 0 else { return nil }
         
-        // Scale image to fill the slightly smaller circle area (210px vs standard 225px @3x)
+        // Scale image to fill the circle area (218px within 225px @3x canvas)
         let baseScale = max(circleDiameter / imgW, circleDiameter / imgH)
         let scaledW = imgW * baseScale
         let scaledH = imgH * baseScale
