@@ -40,17 +40,11 @@ from apply_card_skin import (
 )
 
 TARGET_ASSETS = [
-    "cardBackgroundCombined@2x.png",
     "cardBackgroundCombined@3x.png",
-    "diffuse@2x.png",
-    "diffuse@3x.png",
-    "background@2x.png",
-    "background@3x.png",
-    "strip@2x.png",
-    "strip@3x.png",
+    "cardBackgroundCombined@2x.png",
 ]
 
-CACHE_FILES = ["FrontFace", "PlaceHolder", "Preview"]
+CACHE_FILES = ["FrontFace"]
 
 CARDS_STORE_PATH = Path.home() / ".aircard_cards.json"
 LEGACY_STORE_PATH = Path.home() / ".lumicards_cards.json"

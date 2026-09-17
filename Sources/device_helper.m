@@ -33,6 +33,7 @@ extern CFTypeRef AMDeviceCopyValue(AMDeviceRef device,
 extern int AMDeviceConnect(AMDeviceRef device);
 extern int AMDeviceDisconnect(AMDeviceRef device);
 extern int AMDeviceIsPaired(AMDeviceRef device);
+extern int AMDevicePair(AMDeviceRef device);
 extern int AMDeviceValidatePairing(AMDeviceRef device);
 extern int AMDeviceStartSession(AMDeviceRef device);
 extern int AMDeviceStopSession(AMDeviceRef device);
@@ -170,8 +171,16 @@ static void OpenSession(DeviceSession *session) {
 
     session->connectStatus = AMDeviceConnect(session->device);
     session->connected = session->connectStatus == 0;
-    if (!session->connected || !AMDeviceIsPaired(session->device)) return;
+    if (!session->connected) return;
+
+    if (!AMDeviceIsPaired(session->device)) {
+        AMDevicePair(session->device);
+    }
     session->validateStatus = AMDeviceValidatePairing(session->device);
+    if (session->validateStatus != 0) {
+        AMDevicePair(session->device);
+        session->validateStatus = AMDeviceValidatePairing(session->device);
+    }
     if (session->validateStatus != 0) return;
     session->sessionStatus = AMDeviceStartSession(session->device);
     session->sessionStarted = session->sessionStatus == 0;

@@ -248,8 +248,6 @@ def cmd_flash_passthm(udid: str, passthm_path: str, telephony_ver: str = "Teleph
                 return
 
             target_dirs = [f"/var/mobile/Library/Caches/{telephony_ver}"]
-            if telephony_ver == "TelephonyUI-10":
-                target_dirs.append("/var/mobile/Library/Caches/TelephonyUI-9")
 
             items_to_write = []
             for entry in image_entries:
