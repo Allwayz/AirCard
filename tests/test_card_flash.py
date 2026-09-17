@@ -1,5 +1,7 @@
 import base64
 import io
+import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -25,7 +27,9 @@ class CardFlashTests(unittest.TestCase):
                 patch.object(aircard_backend, "write_file", write_file),
                 redirect_stdout(io.StringIO()),
             ):
-                aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+
+        self.assertTrue(result)
 
         writes = [call.args for call in write_file.call_args_list]
         pass_assets = {
@@ -45,10 +49,54 @@ class CardFlashTests(unittest.TestCase):
 
         cache_entries = {(target, leaf) for _, target, leaf, _ in writes}
         for extension in (".cache", ".pkcache"):
-            self.assertIn(
-                (f"/var/mobile/Library/Passes/Cards/card{extension}", "PlaceHolder"),
-                cache_entries,
+            for leaf in aircard_backend.CACHE_FILES:
+                self.assertIn(
+                    (f"/var/mobile/Library/Passes/Cards/card{extension}", leaf),
+                    cache_entries,
+                )
+
+    def test_flash_reports_failure_when_an_asset_write_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image_path = Path(temporary) / "card.png"
+            image_path.write_bytes(PNG_1X1)
+            write_file = Mock(
+                side_effect=[True, True, False, True, True, True, True, True, True]
             )
+            output = io.StringIO()
+
+            with (
+                patch.object(aircard_backend, "write_file", write_file),
+                redirect_stdout(output),
+            ):
+                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertFalse(result)
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertFalse(any(message["type"] == "success" for message in messages))
+
+    def test_flash_reports_failure_when_pdf_conversion_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image_path = Path(temporary) / "card.png"
+            image_path.write_bytes(PNG_1X1)
+            write_file = Mock(return_value=True)
+            output = io.StringIO()
+
+            with (
+                patch.object(aircard_backend, "write_file", write_file),
+                patch.object(
+                    aircard_backend,
+                    "build_card_assets",
+                    side_effect=subprocess.CalledProcessError(1, ["sips"]),
+                ),
+                redirect_stdout(output),
+            ):
+                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertFalse(result)
+        self.assertEqual(messages[-1]["type"], "error")
+        write_file.assert_not_called()
 
 
 if __name__ == "__main__":
