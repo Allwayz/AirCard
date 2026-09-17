@@ -1482,6 +1482,7 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .controlSize(.regular)
             .frame(width: 290)
             
             Spacer()
@@ -1524,8 +1525,10 @@ struct ContentView: View {
                     .foregroundColor(.pink)
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(.regular)
         }
+        .controlSize(.regular)
+        .frame(height: 54)
     }
     
     private var toolbarView: some View {
@@ -1592,6 +1595,8 @@ struct ContentView: View {
                 }
             }
         }
+        .controlSize(.regular)
+        .frame(height: 46)
     }
     
     private var scanningNoticeBanner: some View {
@@ -1688,51 +1693,28 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .controlSize(.regular)
             .frame(width: 250)
-            
-            Divider()
-                .frame(height: 18)
             
             if vm.passcodeTabMode == .applyTheme {
                 Button(action: { openPasscodeThemePicker() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder.badge.plus")
-                        Text("Choose .passthm File")
-                            .fontWeight(.semibold)
-                    }
+                    Label("Choose .passthm File...", systemImage: "folder.badge.plus")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
-                
-                if vm.loadedPasscodeTheme != nil {
-                    Button(action: { vm.loadedPasscodeTheme = nil }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "trash")
-                            Text("Clear Theme")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             } else {
-                // Theme Creator Sub-Mode Picker
-                Picker("", selection: $vm.creatorSubMode) {
-                    ForEach(CreatorSubMode.allCases) { subMode in
-                        Text(subMode.rawValue).tag(subMode)
-                    }
+                Button(action: { openPosterPicker() }) {
+                    Label(vm.creatorPosterImage == nil ? "Choose Poster..." : "Change Poster...", systemImage: "photo")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
                 
-                if vm.creatorSubMode == .posterSlice && vm.creatorPosterImage != nil {
-                    Button(action: { openPosterPicker() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "photo")
-                            Text("Change Poster...")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Button(action: { openSavePasscodeThemePanel() }) {
+                    Label("Export .passthm...", systemImage: "square.and.arrow.up")
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(vm.effectiveCreatorKeys.isEmpty)
             }
             
             Spacer()
@@ -1747,9 +1729,33 @@ struct ContentView: View {
                     Text("TelephonyUI-9 (iOS 16–17)").tag("TelephonyUI-9")
                 }
                 .pickerStyle(.menu)
-                .frame(width: 200)
+                .controlSize(.regular)
+                .frame(width: 195)
+            }
+            
+            Text("·")
+                .foregroundColor(.secondary)
+            
+            if vm.passcodeTabMode == .applyTheme {
+                Button("Clear Theme") {
+                    vm.loadedPasscodeTheme = nil
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .foregroundColor(.red)
+                .disabled(vm.loadedPasscodeTheme == nil)
+            } else {
+                Button("Clear All") {
+                    vm.clearCreator()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .foregroundColor(.red)
+                .disabled(vm.effectiveCreatorKeys.isEmpty && vm.creatorPosterImage == nil)
             }
         }
+        .controlSize(.regular)
+        .frame(height: 46)
     }
     
     private var passcodeThemeWorkspaceView: some View {
@@ -2012,6 +2018,17 @@ struct ContentView: View {
     
     private var creatorControlsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Mode Selector: Poster Slice vs Individual Keys
+            Picker("", selection: $vm.creatorSubMode) {
+                ForEach(CreatorSubMode.allCases) { subMode in
+                    Text(subMode.rawValue).tag(subMode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.regular)
+            
+            Divider()
+            
             if vm.creatorSubMode == .posterSlice {
                 // 1. Poster Source Section
                 VStack(alignment: .leading, spacing: 8) {
@@ -2166,22 +2183,6 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                
-                Divider()
-                
-                // 4. Switch to Individual Keys Button
-                Button(action: {
-                    vm.adoptPosterSlicesToIndividualKeys()
-                    vm.creatorSubMode = .individualKeys
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.grid.3x3.fill")
-                        Text("Switch to Individual Keys Mode")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                
             } else {
                 // Individual Keys Mode Controls
                 VStack(alignment: .leading, spacing: 10) {
