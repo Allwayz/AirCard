@@ -217,17 +217,26 @@ class KeypadSlicer {
         return results
     }
     
-    static func cropToCircle(image: NSImage, targetSize: CGSize = CGSize(width: 300, height: 300)) -> NSImage? {
+    static func cropToCircle(
+        image: NSImage,
+        targetSize: CGSize = CGSize(width: 225, height: 225),
+        circleDiameter: CGFloat = 210.0
+    ) -> NSImage? {
         guard let cgImg = cgImage(from: image) else { return nil }
         let imgW = CGFloat(cgImg.width)
         let imgH = CGFloat(cgImg.height)
         guard imgW > 0 && imgH > 0 else { return nil }
         
-        let baseScale = max(targetSize.width / imgW, targetSize.height / imgH)
+        // Scale image to fill the slightly smaller circle area (210px vs standard 225px @3x)
+        let baseScale = max(circleDiameter / imgW, circleDiameter / imgH)
         let scaledW = imgW * baseScale
         let scaledH = imgH * baseScale
-        let destX = (targetSize.width - scaledW) / 2.0
-        let destY = (targetSize.height - scaledH) / 2.0
+        
+        let circleX = (targetSize.width - circleDiameter) / 2.0
+        let circleY = (targetSize.height - circleDiameter) / 2.0
+        
+        let destX = circleX + (circleDiameter - scaledW) / 2.0
+        let destY = circleY + (circleDiameter - scaledH) / 2.0
         let destCGY = targetSize.height - destY - scaledH
         
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -242,7 +251,7 @@ class KeypadSlicer {
         ) else { return nil }
         
         ctx.clear(CGRect(origin: .zero, size: targetSize))
-        ctx.addEllipse(in: CGRect(origin: .zero, size: targetSize))
+        ctx.addEllipse(in: CGRect(x: circleX, y: circleY, width: circleDiameter, height: circleDiameter))
         ctx.clip()
         ctx.draw(cgImg, in: CGRect(x: destX, y: destCGY, width: scaledW, height: scaledH))
         
@@ -763,6 +772,9 @@ class AppViewModel: ObservableObject {
         scanProcess?.terminate()
         scanProcess = nil
         isScanningCards = false
+        if statusText.contains("Double-click Side button") {
+            statusText = "Ready"
+        }
         saveCards()
         log("Scanning stopped. Total cards: \(cards.count).")
     }
@@ -1468,6 +1480,14 @@ struct ContentView: View {
         }
         .sheet(isPresented: $vm.showAddCardSheet) {
             addCardSheet
+        }
+        .onChange(of: vm.selectedTab) { _, newTab in
+            if newTab == .passcodeThemes && vm.isScanningCards {
+                vm.stopCardScanning()
+            }
+            if vm.statusText.contains("Double-click Side button") {
+                vm.statusText = "Ready"
+            }
         }
     }
     
@@ -2369,9 +2389,8 @@ struct ContentView: View {
                 if let img = customIndividualImage {
                     Image(nsImage: img)
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .aspectRatio(contentMode: .fit)
                         .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
-                        .clipShape(Circle())
                 }
                 
                 Circle()
@@ -2393,9 +2412,22 @@ struct ContentView: View {
             }
         }
         .frame(width: KeypadLayout.buttonDiameter, height: KeypadLayout.buttonDiameter)
+        .contentShape(Rectangle())
         .onTapGesture {
             if vm.creatorSubMode == .individualKeys {
                 openIndividualKeyPicker(for: btn.digit)
+            }
+        }
+        .contextMenu {
+            if vm.creatorSubMode == .individualKeys {
+                Button("Change Key \(btn.digit)...") {
+                    openIndividualKeyPicker(for: btn.digit)
+                }
+                if customIndividualImage != nil {
+                    Button("Clear Key \(btn.digit)") {
+                        vm.clearIndividualKey(digit: btn.digit)
+                    }
+                }
             }
         }
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: nil) { providers in
@@ -2621,38 +2653,25 @@ struct ContentView: View {
                 // Apply / Flash Button
                 if vm.selectedTab == .passcodeThemes {
                     if vm.passcodeTabMode == .themeCreator {
-                        HStack(spacing: 8) {
-                            Button(action: { openSavePasscodeThemePanel() }) {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "square.and.arrow.up")
+                        Button(action: { vm.flashCreatedTheme() }) {
+                            HStack(spacing: 6) {
+                                if vm.isFlashing {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
                                         .frame(width: 16, height: 16)
-                                    Text("Export .passthm...")
+                                } else {
+                                    Image(systemName: "lock.shield.fill")
+                                        .frame(width: 16, height: 16)
                                 }
+                                Text(vm.isFlashing ? "Flashing Passcode..." : "Flash to iPhone")
+                                    .fontWeight(.semibold)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.regular)
-                            .disabled(vm.effectiveCreatorKeys.isEmpty)
-                            
-                            Button(action: { vm.flashCreatedTheme() }) {
-                                HStack(spacing: 6) {
-                                    if vm.isFlashing {
-                                        ProgressView()
-                                            .scaleEffect(0.7)
-                                            .frame(width: 16, height: 16)
-                                    } else {
-                                        Image(systemName: "lock.shield.fill")
-                                            .frame(width: 16, height: 16)
-                                    }
-                                    Text(vm.isFlashing ? "Flashing Passcode..." : "Flash to iPhone")
-                                        .fontWeight(.semibold)
-                                }
-                                .padding(.horizontal, 8)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.purple)
-                            .controlSize(.regular)
-                            .disabled(vm.effectiveCreatorKeys.isEmpty || vm.isFlashing || vm.device?.connected != true)
+                            .padding(.horizontal, 8)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .controlSize(.regular)
+                        .disabled(vm.effectiveCreatorKeys.isEmpty || vm.isFlashing || vm.device?.connected != true)
                     } else {
                         Button(action: { vm.flashPasscodeTheme() }) {
                             HStack(spacing: 6) {
