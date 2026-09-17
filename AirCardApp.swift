@@ -1260,13 +1260,36 @@ struct WalletCardView: View {
             .shadow(color: .black.opacity(isHovered ? 0.22 : 0.12), radius: isHovered ? 10 : 5, y: isHovered ? 5 : 2)
             .onHover { h in isHovered = h }
             .onTapGesture { onPickImage() }
-            .onDrop(of: [UTType.image], isTargeted: $isTargeted) { providers in
-                if let provider = providers.first {
-                    provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
+            .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $isTargeted) { providers in
+                guard let provider = providers.first else { return false }
+                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                    provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                        var fileURL: URL?
                         if let url = item as? URL {
+                            fileURL = url
+                        } else if let data = item as? Data, let urlStr = String(data: data, encoding: .utf8), let url = URL(string: urlStr) {
+                            fileURL = url
+                        }
+                        if let url = fileURL, let img = NSImage(contentsOf: url) {
                             Task { @MainActor in
                                 card.customImageURL = url
-                                card.customImage = NSImage(contentsOf: url)
+                                card.customImage = img
+                                card.isSelected = true
+                            }
+                        }
+                    }
+                    return true
+                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                    provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
+                        if let url = item as? URL, let img = NSImage(contentsOf: url) {
+                            Task { @MainActor in
+                                card.customImageURL = url
+                                card.customImage = img
+                                card.isSelected = true
+                            }
+                        } else if let img = item as? NSImage {
+                            Task { @MainActor in
+                                card.customImage = img
                                 card.isSelected = true
                             }
                         }
@@ -1359,7 +1382,8 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // 1. Top Header Bar
             headerView
-                .padding(.horizontal, 20)
+                .padding(.leading, 78)
+                .padding(.trailing, 20)
                 .frame(height: 54)
                 .background(Color(NSColor.controlBackgroundColor))
             
@@ -1373,7 +1397,7 @@ struct ContentView: View {
                     passcodeToolbarView
                 }
             }
-            .frame(height: 46)
+            .frame(height: 48)
             .padding(.horizontal, 20)
             .background(Color(NSColor.windowBackgroundColor))
             
@@ -1497,14 +1521,17 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(dev.name ?? "iPhone")
                             .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
                         Text("\(dev.product ?? "") · iOS \(dev.version ?? "")")
                             .font(.system(size: 9))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 } else {
                     Text("No iPhone (USB)")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
                 
                 Button(action: { vm.checkDevice() }) {
@@ -1517,6 +1544,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
+            .frame(height: 32)
             .background(Color(NSColor.windowBackgroundColor))
             .cornerRadius(16)
             
@@ -1539,8 +1567,10 @@ struct ContentView: View {
                     if vm.isScanningCards {
                         ProgressView()
                             .scaleEffect(0.65)
+                            .frame(width: 16, height: 16)
                     } else {
                         Image(systemName: "wave.3.forward.circle.fill")
+                            .frame(width: 16, height: 16)
                     }
                     Text(vm.isScanningCards ? "Stop Scanning" : "Scan Cards")
                         .fontWeight(.semibold)
@@ -1596,7 +1626,7 @@ struct ContentView: View {
             }
         }
         .controlSize(.regular)
-        .frame(height: 46)
+        .frame(height: 48)
     }
     
     private var scanningNoticeBanner: some View {
@@ -1671,12 +1701,14 @@ struct ContentView: View {
                         .fontWeight(.semibold)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
                 .disabled(vm.device?.connected != true)
                 
                 Button("Add Hashes Manually") {
                     vm.showAddCardSheet = true
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
         }
         .padding(40)
@@ -1700,13 +1732,15 @@ struct ContentView: View {
                 Button(action: { openPasscodeThemePicker() }) {
                     Label("Choose .passthm File...", systemImage: "folder.badge.plus")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
                 .controlSize(.regular)
             } else {
                 Button(action: { openPosterPicker() }) {
                     Label(vm.creatorPosterImage == nil ? "Choose Poster..." : "Change Poster...", systemImage: "photo")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
                 .controlSize(.regular)
                 
                 Button(action: { openSavePasscodeThemePanel() }) {
@@ -1755,7 +1789,7 @@ struct ContentView: View {
             }
         }
         .controlSize(.regular)
-        .frame(height: 46)
+        .frame(height: 48)
     }
     
     private var passcodeThemeWorkspaceView: some View {
@@ -1895,7 +1929,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.purple)
-                    .controlSize(.small)
+                    .controlSize(.regular)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
@@ -2088,7 +2122,7 @@ struct ContentView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.purple)
-                            .controlSize(.small)
+                            .controlSize(.regular)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
@@ -2572,33 +2606,26 @@ struct ContentView: View {
                 
                 // Toggle Log Drawer
                 Button(action: { withAnimation { vm.showLogs.toggle() } }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: "terminal")
+                            .frame(width: 14, height: 14)
                         Text("Log")
                         Image(systemName: vm.showLogs ? "chevron.down" : "chevron.up")
+                            .font(.system(size: 9, weight: .bold))
                     }
-                    .font(.caption2)
+                    .font(.caption)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.regular)
                 
                 // Apply / Flash Button
                 if vm.selectedTab == .passcodeThemes {
                     if vm.passcodeTabMode == .themeCreator {
                         HStack(spacing: 8) {
-                            Button(action: { vm.clearCreator() }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "trash")
-                                    Text("Clear All")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.regular)
-                            .disabled(vm.effectiveCreatorKeys.isEmpty && vm.creatorPosterImage == nil)
-                            
                             Button(action: { openSavePasscodeThemePanel() }) {
-                                HStack(spacing: 4) {
+                                HStack(spacing: 5) {
                                     Image(systemName: "square.and.arrow.up")
+                                        .frame(width: 16, height: 16)
                                     Text("Export .passthm...")
                                 }
                             }
@@ -2611,8 +2638,10 @@ struct ContentView: View {
                                     if vm.isFlashing {
                                         ProgressView()
                                             .scaleEffect(0.7)
+                                            .frame(width: 16, height: 16)
                                     } else {
                                         Image(systemName: "lock.shield.fill")
+                                            .frame(width: 16, height: 16)
                                     }
                                     Text(vm.isFlashing ? "Flashing Passcode..." : "Flash to iPhone")
                                         .fontWeight(.semibold)
@@ -2630,8 +2659,10 @@ struct ContentView: View {
                                 if vm.isFlashing {
                                     ProgressView()
                                         .scaleEffect(0.7)
+                                        .frame(width: 16, height: 16)
                                 } else {
                                     Image(systemName: "lock.shield.fill")
+                                        .frame(width: 16, height: 16)
                                 }
                                 Text(vm.isFlashing ? "Flashing Passcode..." : "Flash Passcode Theme")
                                     .fontWeight(.semibold)
@@ -2649,8 +2680,10 @@ struct ContentView: View {
                             if vm.isFlashing {
                                 ProgressView()
                                     .scaleEffect(0.7)
+                                    .frame(width: 16, height: 16)
                             } else {
                                 Image(systemName: "sparkles")
+                                    .frame(width: 16, height: 16)
                             }
                             Text(vm.isFlashing ? "Flashing Cards..." : (readyToFlashCount > 0 ? "Flash Skins (\(readyToFlashCount) Cards)" : "Flash Skins"))
                                 .fontWeight(.semibold)
@@ -2695,7 +2728,7 @@ struct ContentView: View {
                 .font(.title2)
                 .fontWeight(.bold)
             
-            Text("Custom Apple Wallet Card Skinner (iOS 18+ via airlift)")
+            Text("Apple Wallet Skins & Passcode Themes for iOS 18+")
                 .font(.caption)
                 .foregroundColor(.secondary)
             
@@ -2732,6 +2765,15 @@ struct ContentView: View {
                     Text("airlift (AirTraffic sync escape)")
                         .foregroundColor(.secondary)
                 }
+                
+                HStack {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundColor(.purple)
+                    Text("Passcode Themes:")
+                        .fontWeight(.medium)
+                    Text(".passthm standard (Cowabunga / Nugget)")
+                        .foregroundColor(.secondary)
+                }
             }
             .font(.subheadline)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2746,7 +2788,7 @@ struct ContentView: View {
             .controlSize(.regular)
         }
         .padding(24)
-        .frame(width: 380)
+        .frame(width: 420)
     }
     
     private var addCardSheet: some View {
@@ -2768,13 +2810,18 @@ struct ContentView: View {
                     vm.showAddCardSheet = false
                     vm.manualHashInput = ""
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                
                 Spacer()
+                
                 Button("Add to List") {
                     vm.addCardHash(vm.manualHashInput)
                     vm.showAddCardSheet = false
                     vm.manualHashInput = ""
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
                 .disabled(vm.manualHashInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
