@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -108,66 +109,82 @@ def operation_ok(result: dict) -> bool:
     )
 
 
-def write_file(udid: str, target: str, leaf: str, payload: bytes) -> bool:
-    token = secrets.token_hex(10)
-    source = f"{SOURCE_PREFIX}{token}"
-    link_destination = f"{LINK_PREFIX}{token}"
-    recovered = f"{RECOVERED_PREFIX}{token}"
+def write_file(udid: str, target: str, leaf: str, payload: bytes, retries: int = 3) -> bool:
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            token = secrets.token_hex(10)
+            source = f"{SOURCE_PREFIX}{token}"
+            link_destination = f"{LINK_PREFIX}{token}"
+            recovered = f"{RECOVERED_PREFIX}{token}"
 
-    link_identifier = f"../../{source}/p0/p1/p2/link"
-    payload_identifier = f"../../{source}/payload"
+            link_identifier = f"../../{source}/p0/p1/p2/link"
+            payload_identifier = f"../../{source}/payload"
 
-    # Step 1: move link to media
-    # Step 2: move new payload into link/leaf (atomically creates or overwrites target)
-    identifiers = [link_identifier, payload_identifier]
-    destinations = [
-        link_destination,
-        posixpath.join(link_destination, leaf),
-    ]
+            # Step 1: move link to media
+            # Step 2: move new payload into link/leaf (atomically creates or overwrites target)
+            identifiers = [link_identifier, payload_identifier]
+            destinations = [
+                link_destination,
+                posixpath.join(link_destination, leaf),
+            ]
 
-    with tempfile.TemporaryDirectory(prefix="airlift-write-") as temporary:
-        work = Path(temporary)
-        archive_path = work / "payload.zip"
-        books_path = work / "Books.plist"
-        snapshot_root = work / "books-snapshot"
-        snapshot_root.mkdir()
+            with tempfile.TemporaryDirectory(prefix="airlift-write-") as temporary:
+                work = Path(temporary)
+                archive_path = work / "payload.zip"
+                books_path = work / "Books.plist"
+                snapshot_root = work / "books-snapshot"
+                snapshot_root.mkdir()
 
-        archive_path.write_bytes(build_archive(target, payload))
-        books_path.write_bytes(build_books(identifiers))
+                archive_path.write_bytes(build_archive(target, payload))
+                books_path.write_bytes(build_books(identifiers))
 
-        snapshot = native("snapshot-books", udid, os.fspath(snapshot_root))
-        if not operation_ok(snapshot):
-            raise RuntimeError("could not snapshot Books state")
+                snapshot = native("snapshot-books", udid, os.fspath(snapshot_root))
+                if not operation_ok(snapshot):
+                    if attempt < retries:
+                        time.sleep(0.3 * attempt)
+                        continue
+                    return False
 
-        stage = native(
-            "stage",
-            udid,
-            source,
-            link_destination,
-            recovered,
-            os.fspath(archive_path),
-            os.fspath(books_path),
-            os.fspath(snapshot_root),
-        )
-        if not operation_ok(stage):
-            raise RuntimeError(f"staging failed: {stage}")
+                stage = native(
+                    "stage",
+                    udid,
+                    source,
+                    link_destination,
+                    recovered,
+                    os.fspath(archive_path),
+                    os.fspath(books_path),
+                    os.fspath(snapshot_root),
+                )
+                if not operation_ok(stage):
+                    if attempt < retries:
+                        time.sleep(0.3 * attempt)
+                        continue
+                    return False
 
-        atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
-        for identifier, destination in zip(identifiers, destinations):
-            atc_cmd.extend((identifier, destination))
-        atc = run_json(atc_cmd, timeout=120)
+                atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
+                for identifier, destination in zip(identifiers, destinations):
+                    atc_cmd.extend((identifier, destination))
+                atc = run_json(atc_cmd, timeout=120)
 
-        finish = native(
-            "finish-write",
-            udid,
-            source,
-            link_destination,
-            recovered,
-            os.fspath(snapshot_root),
-        )
+                finish = native(
+                    "finish-write",
+                    udid,
+                    source,
+                    link_destination,
+                    recovered,
+                    os.fspath(snapshot_root),
+                )
 
-    ok = bool(atc.get("exitCode") == 0 and atc.get("ok") and operation_ok(finish))
-    return ok
+            ok = bool(atc.get("exitCode") == 0 and atc.get("ok") and operation_ok(finish))
+            if ok:
+                return True
+        except Exception:
+            pass
+
+        if attempt < retries:
+            time.sleep(0.3 * attempt)
+
+    return False
 
 
 def invalidate_cache(udid: str, card_hash: str) -> bool:

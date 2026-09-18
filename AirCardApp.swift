@@ -55,6 +55,66 @@ enum CreatorSubMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum PasscodeLanguageTarget: String, CaseIterable, Identifiable {
+    case all = "All Languages (Universal)"
+    case uk = "Ukrainian (uk)"
+    case ru = "Russian (ru)"
+    case en = "English (en)"
+    case other = "Other / Fallback"
+    case es = "Spanish (es)"
+    case de = "German (de)"
+    case fr = "French (fr)"
+    case pl = "Polish (pl)"
+    case it = "Italian (it)"
+    case pt = "Portuguese (pt)"
+    case tr = "Turkish (tr)"
+    case ja = "Japanese (ja)"
+    case ko = "Korean (ko)"
+    case zh = "Chinese (zh)"
+    case ar = "Arabic (ar)"
+    case he = "Hebrew (he)"
+    
+    var id: String { rawValue }
+    
+    var code: String {
+        switch self {
+        case .all: return "all"
+        case .uk: return "uk"
+        case .ru: return "ru"
+        case .en: return "en"
+        case .other: return "other"
+        case .es: return "es"
+        case .de: return "de"
+        case .fr: return "fr"
+        case .pl: return "pl"
+        case .it: return "it"
+        case .pt: return "pt"
+        case .tr: return "tr"
+        case .ja: return "ja"
+        case .ko: return "ko"
+        case .zh: return "zh"
+        case .ar: return "ar"
+        case .he: return "he"
+        }
+    }
+}
+
+enum PasscodeBoldTarget: String, CaseIterable, Identifiable {
+    case both = "Universal (Regular + Bold)"
+    case boldOnly = "Bold Text Only (Fast)"
+    case regularOnly = "Regular Font Only (Fast)"
+    
+    var id: String { rawValue }
+    
+    var code: String {
+        switch self {
+        case .both: return "both"
+        case .boldOnly: return "bold"
+        case .regularOnly: return "regular"
+        }
+    }
+}
+
 struct KeypadButtonGeometry: Identifiable {
     var id: String { digit }
     let digit: String
@@ -296,11 +356,36 @@ class PasscodeThemeExporter {
         return rep.representation(using: .png, properties: [:])
     }
     
-    static func exportTheme(keys: [String: NSImage], targetURL: URL) throws {
+    static let supportedLocales = [
+        "en", "other", "ru", "uk", "es", "fr", "de", "it", "pt", "tr", "pl", "nl", "ja", "ko", "zh", "ar", "he"
+    ]
+    
+    static func exportTheme(
+        keys: [String: NSImage],
+        targetURL: URL,
+        language: PasscodeLanguageTarget = .all,
+        boldMode: PasscodeBoldTarget = .both
+    ) throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("passthm_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: tempDir)
+        }
+        
+        let localesToExport: [String]
+        if language == .all {
+            localesToExport = supportedLocales
+        } else {
+            var setL = [language.code]
+            if language.code != "other" { setL.append("other") }
+            localesToExport = setL
+        }
+        
+        let boldSuffixes: [String]
+        switch boldMode {
+        case .both: boldSuffixes = ["", "-bold"]
+        case .boldOnly: boldSuffixes = ["-bold"]
+        case .regularOnly: boldSuffixes = [""]
         }
         
         for ver in ["TelephonyUI-10", "TelephonyUI-9"] {
@@ -314,18 +399,20 @@ class PasscodeThemeExporter {
                 guard let pngData = pngData(from: image) else { continue }
                 let subtext = KeypadLayout.keypadSubtexts[digit] ?? ""
                 
-                var filenames = [
-                    "en-\(digit)---white.png",
-                    "other-\(digit)---white.png"
-                ]
-                if !subtext.isEmpty {
-                    filenames.append("en-\(digit)-\(subtext)--white.png")
-                    filenames.append("other-\(digit)-\(subtext)--white.png")
-                }
-                
-                for fn in filenames {
-                    let fileURL = verDir.appendingPathComponent(fn)
-                    try pngData.write(to: fileURL)
+                for lang in localesToExport {
+                    for boldSuffix in boldSuffixes {
+                        // Blank variant: lang-digit---white[-bold].png
+                        let blankFn = "\(lang)-\(digit)---white\(boldSuffix).png"
+                        let blankURL = verDir.appendingPathComponent(blankFn)
+                        try? pngData.write(to: blankURL)
+                        
+                        // Subtext variant: lang-digit-subtext--white[-bold].png
+                        if !subtext.isEmpty {
+                            let subFn = "\(lang)-\(digit)-\(subtext)--white\(boldSuffix).png"
+                            let subURL = verDir.appendingPathComponent(subFn)
+                            try? pngData.write(to: subURL)
+                        }
+                    }
                 }
             }
         }
@@ -350,10 +437,14 @@ class PasscodeThemeExporter {
         }
     }
     
-    static func stageTemporaryTheme(keys: [String: NSImage]) -> URL? {
+    static func stageTemporaryTheme(
+        keys: [String: NSImage],
+        language: PasscodeLanguageTarget = .all,
+        boldMode: PasscodeBoldTarget = .both
+    ) -> URL? {
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("AirCard_Custom_\(UUID().uuidString).passthm")
         do {
-            try exportTheme(keys: keys, targetURL: tempURL)
+            try exportTheme(keys: keys, targetURL: tempURL, language: language, boldMode: boldMode)
             return tempURL
         } catch {
             print("Failed to stage temporary theme: \(error)")
@@ -370,6 +461,8 @@ class AppViewModel: ObservableObject {
     @Published var loadedPasscodeTheme: PasscodeThemeInfo? = nil
     @Published var isInspectingTheme = false
     @Published var targetTelephonyVersion: String = "TelephonyUI-10"
+    @Published var passcodeLanguageTarget: PasscodeLanguageTarget = .all
+    @Published var passcodeBoldTarget: PasscodeBoldTarget = .both
     
     // Theme Creator Properties
     @Published var passcodeTabMode: PasscodeTabMode = .applyTheme
@@ -982,6 +1075,7 @@ class AppViewModel: ObservableObject {
                 )
                 await MainActor.run {
                     self.loadedPasscodeTheme = themeInfo
+                    self.targetTelephonyVersion = detectedVersion
                     self.isInspectingTheme = false
                     self.statusText = "Loaded passcode theme '\(name)' (\(fileCount) assets)"
                     self.log("Loaded .passthm: \(name) [\(detectedVersion)] with \(fileCount) image assets")
@@ -1009,13 +1103,23 @@ class AppViewModel: ObservableObject {
         log("Flashing passcode theme '\(theme.name)' to device...")
         let scriptDir = self.scriptDir
         let targetVer = self.targetTelephonyVersion
+        let targetLang = self.passcodeLanguageTarget.code
+        let targetBold = self.passcodeBoldTarget.code
         
         Task.detached {
             let proc = Process()
             proc.executableURL = AppViewModel.pythonExecutableURL
             proc.environment = AppViewModel.processEnvironment
             proc.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
-            proc.arguments = ["aircard_backend.py", "--flash-passthm", udid, theme.filePath, targetVer]
+            proc.arguments = [
+                "aircard_backend.py",
+                "--flash-passthm",
+                udid,
+                theme.filePath,
+                targetVer,
+                targetLang,
+                targetBold
+            ]
             
             let pipe = Pipe()
             proc.standardOutput = pipe
@@ -1074,13 +1178,20 @@ class AppViewModel: ObservableObject {
             }
             
             proc.waitUntilExit()
+            let exitCode = proc.terminationStatus
             
             await MainActor.run {
                 self.isFlashing = false
-                self.progress = 1.0
-                self.statusText = "Passcode theme applied successfully!"
-                self.showSuccessAlert = true
-                self.log("Passcode theme '\(theme.name)' successfully flashed!")
+                if exitCode == 0 && self.errorMessage == nil {
+                    self.progress = 1.0
+                    self.statusText = "Passcode theme applied successfully!"
+                    self.showSuccessAlert = true
+                    self.log("Passcode theme '\(theme.name)' successfully flashed!")
+                } else {
+                    let err = self.errorMessage ?? "Flashing failed (exit code \(exitCode))"
+                    self.statusText = err
+                    self.log("ERROR: \(err)")
+                }
             }
         }
     }
@@ -1205,7 +1316,11 @@ class AppViewModel: ObservableObject {
             return
         }
         
-        guard let stagedURL = PasscodeThemeExporter.stageTemporaryTheme(keys: keys) else {
+        guard let stagedURL = PasscodeThemeExporter.stageTemporaryTheme(
+            keys: keys,
+            language: passcodeLanguageTarget,
+            boldMode: passcodeBoldTarget
+        ) else {
             errorMessage = "Failed to package theme for flashing."
             return
         }
@@ -1547,7 +1662,7 @@ struct ContentView: View {
             Button("OK") {}
         } message: {
             if vm.selectedTab == .passcodeThemes {
-                Text("Passcode theme successfully applied!\n\nLock your iPhone (and make sure Bold Text is turned OFF in Settings) to see your new passcode keypad.")
+                Text("Passcode theme successfully applied!\n\nLock your iPhone (or restart) to see your new passcode keypad.")
             } else {
                 Text("Skins successfully applied to all selected cards!\n\nPlease force-close the Wallet app on your iPhone (or reboot) to see your new designs.")
             }
@@ -1581,7 +1696,7 @@ struct ContentView: View {
                     Text("AirCard")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("v1.2")
+                    Text("v1.2.1")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1858,10 +1973,12 @@ struct ContentView: View {
                 Picker("", selection: $vm.targetTelephonyVersion) {
                     Text("TelephonyUI-10 (iOS 18+)").tag("TelephonyUI-10")
                     Text("TelephonyUI-9 (iOS 16–17)").tag("TelephonyUI-9")
+                    Text("TelephonyUI-8 (iOS 14–15)").tag("TelephonyUI-8")
+                    Text("Universal (All 8, 9, 10)").tag("all")
                 }
                 .pickerStyle(.menu)
                 .controlSize(.regular)
-                .frame(width: 195)
+                .frame(width: 205)
             }
             
             Text("·")
@@ -1906,7 +2023,7 @@ struct ContentView: View {
             // Left Column: Controls & Actions (width: 320)
             VStack(alignment: .leading, spacing: 14) {
                 applyThemeControlsCard
-                boldTextWarningBox
+                targetSettingsCard
                 Spacer()
             }
             .frame(width: 320)
@@ -2123,7 +2240,7 @@ struct ContentView: View {
             // Left Column: Controls & Actions (width: 320)
             VStack(alignment: .leading, spacing: 14) {
                 creatorControlsCard
-                boldTextWarningBox
+                targetSettingsCard
                 Spacer()
             }
             .frame(width: 320)
@@ -2727,28 +2844,76 @@ struct ContentView: View {
         .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 8)
     }
     
-    // MARK: - Warning Banner
+    // MARK: - Passcode Target Configuration Box
     
-    private var boldTextWarningBox: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
-                .font(.system(size: 14))
-                .padding(.top, 2)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Turn off Bold Text on iPhone")
+    private var targetSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundColor(.purple)
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Flash & Language Target")
                     .font(.caption)
                     .fontWeight(.semibold)
-                Text("Settings ➔ Display & Brightness ➔ **Bold Text OFF**. Otherwise iOS overrides custom keypad artwork.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
+                Spacer()
             }
+            
+            // 1. Language Target Selector
+            VStack(alignment: .leading, spacing: 4) {
+                Text("System Language:")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Picker("", selection: $vm.passcodeLanguageTarget) {
+                    ForEach(PasscodeLanguageTarget.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+            }
+            
+            // 2. Bold / Font Weight Selector
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Font Weight / Style:")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Picker("", selection: $vm.passcodeBoldTarget) {
+                    ForEach(PasscodeBoldTarget.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
+                }
+                .pickerStyle(.menu)
+                .controlSize(.small)
+            }
+            
+            // Helpful Speed / Info Hint
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: vm.passcodeLanguageTarget == .all && vm.passcodeBoldTarget == .both ? "globe" : "bolt.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(vm.passcodeLanguageTarget == .all && vm.passcodeBoldTarget == .both ? .secondary : .orange)
+                    .padding(.top, 1)
+                
+                if vm.passcodeLanguageTarget == .all && vm.passcodeBoldTarget == .both {
+                    Text("Universal mode flashes ~600 files for all languages & Bold text. Selecting a specific language (e.g. Ukrainian) speeds up flashing dramatically.")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Fast mode selected: only targets \(vm.passcodeLanguageTarget.rawValue) with \(vm.passcodeBoldTarget.rawValue).")
+                        .font(.system(size: 9))
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 2)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.1)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.orange.opacity(0.3), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(NSColor.controlBackgroundColor).opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.purple.opacity(0.3), lineWidth: 1))
     }
     
     private var activityLogView: some View {
@@ -2822,8 +2987,9 @@ struct ContentView: View {
                     if vm.selectedTab == .passcodeThemes {
                         if vm.passcodeTabMode == .themeCreator {
                             let count = vm.effectiveCreatorKeys.count
+                            let targetInfo = "\(vm.targetTelephonyVersion) · \(vm.passcodeLanguageTarget.code.uppercased()) · \(vm.passcodeBoldTarget.code)"
                             if count > 0 {
-                                Text("Theme Creator · \(count) of 10 keys configured · Target: \(vm.targetTelephonyVersion)")
+                                Text("Theme Creator · \(count) of 10 keys configured · Target: \(targetInfo)")
                                     .font(.system(size: 10))
                                     .foregroundColor(.secondary)
                             } else {
@@ -2832,7 +2998,8 @@ struct ContentView: View {
                                     .foregroundColor(.secondary)
                             }
                         } else if let theme = vm.loadedPasscodeTheme {
-                            Text("\(theme.fileCount) assets ready · Target: \(vm.targetTelephonyVersion)")
+                            let targetInfo = "\(vm.targetTelephonyVersion) · \(vm.passcodeLanguageTarget.code.uppercased()) · \(vm.passcodeBoldTarget.code)"
+                            Text("\(theme.fileCount) source assets loaded · Target: \(targetInfo)")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         } else {

@@ -57,9 +57,9 @@
 4. Click **Apply Passcode Theme**.
 5. Restart your iPhone to reload the lock screen cache and see your custom passcode buttons!
 
-> [!IMPORTANT]
-> **Turn OFF Bold Text:**  
-> On your iPhone, go to **Settings ➔ Display & Brightness** and make sure **Bold Text** is turned **OFF**. If Bold Text is enabled, iOS bypasses cached keypad graphics and draws vector fonts instead.
+> [!TIP]
+> **Universal Language & Bold Text Support:**  
+> AirCard automatically expands and flashes custom keypad assets for all system locales (English, Ukrainian, Russian, Spanish, German, French, etc.) and generates both standard and **Bold Text** cache bitmaps (`--white` and `--white-bold`), ensuring your theme works regardless of your iOS language or accessibility display settings!
 
 ---
 

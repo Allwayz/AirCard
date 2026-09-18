@@ -27,21 +27,21 @@ def verify_archive_extraction(passthm_path: str, name: str):
     for d in range(10):
         digit = str(d)
         
-        # Must have blank subtext variants for en- and other-
-        en_blank = f"en-{digit}---white.png"
-        other_blank = f"other-{digit}---white.png"
-        assert en_blank in leaves, f"Missing {en_blank} for digit {digit} in {name}"
-        assert other_blank in leaves, f"Missing {other_blank} for digit {digit} in {name}"
+        # Must have blank subtext variants for en-, other-, ru-, uk- and bold
+        for lang in ["en", "other", "ru", "uk"]:
+            for bold in ["", "-bold"]:
+                blank_fn = f"{lang}-{digit}---white{bold}.png"
+                assert blank_fn in leaves, f"Missing {blank_fn} for digit {digit} in {name}"
         
         # Must have standard subtext variants if subtext is defined
         subtext = KEYPAD_SUBTEXTS.get(digit, "")
         if subtext:
-            en_sub = f"en-{digit}-{subtext}--white.png"
-            other_sub = f"other-{digit}-{subtext}--white.png"
-            assert en_sub in leaves, f"Missing {en_sub} for digit {digit} in {name}"
-            assert other_sub in leaves, f"Missing {other_sub} for digit {digit} in {name}"
+            for lang in ["en", "other", "ru", "uk"]:
+                for bold in ["", "-bold"]:
+                    sub_fn = f"{lang}-{digit}-{subtext}--white{bold}.png"
+                    assert sub_fn in leaves, f"Missing {sub_fn} for digit {digit} in {name}"
 
-    print(f"✓ {name} parsed all 10 digits with en-, other-, blank, and subtext variants successfully")
+    print(f"✓ {name} parsed all 10 digits with en-, other-, ru-, uk-, bold and subtext variants successfully")
 
 
 def test_minepass_nightly():
@@ -54,7 +54,51 @@ def test_tck():
     verify_archive_extraction(tck_path, "тцк.passthm")
 
 
+def test_filtered_modes():
+    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
+    # Test uk + bold only
+    items_uk_bold = parse_passthm_archive(minepass_path, "TelephonyUI-10", target_lang="uk", target_bold="bold")
+    leaves_uk_bold = [item[1] for item in items_uk_bold]
+    assert all("bold" in leaf for leaf in leaves_uk_bold), "Non-bold files present in bold-only mode"
+    assert any("uk-6" in leaf for leaf in leaves_uk_bold), "Missing uk-6 key in uk mode"
+    assert not any("ru-" in leaf for leaf in leaves_uk_bold), "ru- files present when uk selected"
+    print(f"✓ Fast mode (uk + bold) generated {len(items_uk_bold)} targeted assets (instead of 600+)")
+    
+    # Test en + regular only
+    items_en_reg = parse_passthm_archive(minepass_path, "TelephonyUI-10", target_lang="en", target_bold="regular")
+    leaves_en_reg = [item[1] for item in items_en_reg]
+    assert not any("bold" in leaf for leaf in leaves_en_reg), "Bold files present in regular-only mode"
+    print(f"✓ Fast mode (en + regular) generated {len(items_en_reg)} targeted assets")
+
+
+def test_digit_5_and_universal():
+    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
+    # Test digit 5 in ru + bold
+    items_ru_bold = parse_passthm_archive(minepass_path, "TelephonyUI-9", target_lang="ru", target_bold="bold")
+    leaves = [item[1] for item in items_ru_bold]
+    
+    # Must have ru-5-J K L--white-bold.png (the exact filename from user screenshot!)
+    assert "ru-5-J K L--white-bold.png" in leaves, "Missing ru-5-J K L--white-bold.png"
+    assert "ru-5---white-bold.png" in leaves, "Missing ru-5---white-bold.png"
+    assert "ru-5-JKL--white-bold.png" in leaves, "Missing ru-5-JKL--white-bold.png"
+    assert "ru-5-М Н О П--white-bold.png" in leaves, "Missing ru-5-М Н О П--white-bold.png"
+    
+    # Ensure target directory matches TelephonyUI-9
+    assert all(item[0] == "/var/mobile/Library/Caches/TelephonyUI-9" for item in items_ru_bold)
+    print("✓ Digit 5 verified for ru + bold with Latin, unspaced, Cyrillic, and blank subtext variants")
+    
+    # Test universal folder mode
+    items_universal = parse_passthm_archive(minepass_path, "all", target_lang="ru", target_bold="bold")
+    dirs = set(item[0] for item in items_universal)
+    assert "/var/mobile/Library/Caches/TelephonyUI-10" in dirs
+    assert "/var/mobile/Library/Caches/TelephonyUI-9" in dirs
+    assert "/var/mobile/Library/Caches/TelephonyUI-8" in dirs
+    print("✓ Universal directory mode covers TelephonyUI-8, 9, and 10")
+
+
 if __name__ == "__main__":
     test_minepass_nightly()
     test_tck()
+    test_filtered_modes()
+    test_digit_5_and_universal()
     print("All backend passthm tests passed successfully!")

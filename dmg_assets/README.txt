@@ -34,7 +34,7 @@
    - Preview the keypad artwork on the interactive mockup.
    - Click "Apply Passcode Theme".
    - Restart your iPhone.
-   * NOTE: Make sure "Bold Text" is turned OFF in iPhone Settings -> Display & Brightness!
+   * NOTE: Supports all system languages (RU, UK, EN, etc.) and Bold Text!
 
 ============================================================
 Developed by @mak5er & @Lumid-Off
