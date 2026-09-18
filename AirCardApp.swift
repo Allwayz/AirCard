@@ -806,6 +806,7 @@ class AppViewModel: ObservableObject {
         let scriptDir = self.scriptDir
         
         Task.detached {
+            var flashFailed = false
             let totalCards = Double(selectedCardsWithSkin.count)
             for (idx, card) in selectedCardsWithSkin.enumerated() {
                 guard let imgURL = card.customImageURL else { continue }
@@ -842,7 +843,16 @@ class AppViewModel: ObservableObject {
                 flashProcess.standardOutput = pipe
                 flashProcess.standardError = Pipe()
                 
-                try? flashProcess.run()
+                do {
+                    try flashProcess.run()
+                } catch {
+                    let message = error.localizedDescription
+                    flashFailed = true
+                    await MainActor.run {
+                        self.log("Failed to launch card flasher: \(message)")
+                    }
+                    break
+                }
                 
                 let handle = pipe.fileHandleForReading
                 var lineBuffer = ""
@@ -897,17 +907,32 @@ class AppViewModel: ObservableObject {
                     await handleJSONLine(finalLine)
                 }
                 flashProcess.waitUntilExit()
+
+                if flashProcess.terminationStatus != 0 {
+                    flashFailed = true
+                    await MainActor.run {
+                        self.log("Card update failed for \(card.id.prefix(12))...")
+                    }
+                    break
+                }
                 
                 await MainActor.run {
                     self.progress = Double(idx + 1) / totalCards
                 }
             }
             
+            let didFail = flashFailed
             await MainActor.run {
                 self.isFlashing = false
-                self.statusText = "Complete! All cards updated."
-                self.showSuccessAlert = true
-                self.log("Skins successfully applied to all selected cards!")
+                if didFail {
+                    self.statusText = "Failed to apply card skins."
+                    self.errorMessage = "One or more cards could not be updated. Check the log and try again."
+                    self.log("Skin application stopped after a card update failed.")
+                } else {
+                    self.statusText = "Complete! All cards updated."
+                    self.showSuccessAlert = true
+                    self.log("Skins successfully applied to all selected cards!")
+                }
             }
         }
     }

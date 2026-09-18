@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -45,12 +46,11 @@ from apply_card_skin import (
     ROOT,
     DEVICE_HELPER,
 )
+from card_assets import CACHE_FILES, build_card_assets
 from aircard import (
     get_connected_device,
     load_saved_cards,
     save_cards,
-    TARGET_ASSETS,
-    CACHE_FILES,
 )
 
 
@@ -117,19 +117,30 @@ def cmd_prepare_image(src: str, dst: str):
         print(json.dumps({"ok": False, "error": str(e)}))
 
 
-def cmd_flash(udid: str, card_hash: str, image_path: str):
+def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
     img_path = Path(image_path)
     if not img_path.is_file():
         print(json.dumps({"ok": False, "error": "Image file not found"}))
-        return
+        return False
 
-    payload = img_path.read_bytes()
+    try:
+        asset_payloads = build_card_assets(img_path.read_bytes())
+    except (OSError, subprocess.SubprocessError):
+        print(json.dumps({
+            "type": "error",
+            "card": card_hash,
+            "message": "Failed to prepare card artwork"
+        }))
+        sys.stdout.flush()
+        return False
+
     pkpass_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}.pkpass"
     
-    total_steps = len(TARGET_ASSETS) + (len(CACHE_FILES) * 2) + 1
+    total_steps = len(asset_payloads) + (len(CACHE_FILES) * 2) + 1
     step = 0
+    all_ok = True
 
-    for asset in TARGET_ASSETS:
+    for asset, payload in asset_payloads:
         step += 1
         print(json.dumps({
             "type": "progress",
@@ -140,8 +151,12 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
             "message": f"Writing {asset}..."
         }))
         sys.stdout.flush()
-        ok = write_file(udid, pkpass_dir, asset, payload)
+        try:
+            ok = write_file(udid, pkpass_dir, asset, payload)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            ok = False
         if not ok:
+            all_ok = False
             print(json.dumps({
                 "type": "error",
                 "card": card_hash,
@@ -163,9 +178,31 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
                 "message": f"Invalidating cache ({leaf} in {ext})..."
             }))
             sys.stdout.flush()
-            write_file(udid, cache_dir, leaf, b"corrupted")
+            try:
+                ok = write_file(udid, cache_dir, leaf, b"corrupted")
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                ok = False
+            if not ok:
+                all_ok = False
+                print(json.dumps({
+                    "type": "error",
+                    "card": card_hash,
+                    "message": f"Failed to invalidate cache ({leaf} in {ext})"
+                }))
+                sys.stdout.flush()
 
     step += 1
+    if not all_ok:
+        print(json.dumps({
+            "type": "error",
+            "card": card_hash,
+            "step": step,
+            "total": total_steps,
+            "message": f"Failed to update {card_hash[:12]}..."
+        }))
+        sys.stdout.flush()
+        return False
+
     print(json.dumps({
         "type": "success",
         "card": card_hash,
@@ -174,6 +211,7 @@ def cmd_flash(udid: str, card_hash: str, image_path: str):
         "message": f"Successfully updated {card_hash[:12]}..."
     }))
     sys.stdout.flush()
+    return True
 
 
 KEYPAD_SUBTEXTS = {
@@ -358,7 +396,8 @@ def main():
     elif norm_cmd == "prepare-image" and len(sys.argv) > 3:
         cmd_prepare_image(sys.argv[2], sys.argv[3])
     elif norm_cmd == "flash" and len(sys.argv) > 4:
-        cmd_flash(sys.argv[2], sys.argv[3], sys.argv[4])
+        if not cmd_flash(sys.argv[2], sys.argv[3], sys.argv[4]):
+            sys.exit(1)
     elif norm_cmd == "inspect-passthm" and len(sys.argv) > 2:
         cmd_inspect_passthm(sys.argv[2])
     elif norm_cmd == "flash-passthm" and len(sys.argv) > 3:
