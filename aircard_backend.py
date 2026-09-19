@@ -44,6 +44,8 @@ from apply_card_skin import (
     native,
     operation_ok,
     write_file,
+    write_files_batch,
+    build_archive_multi,
     ROOT,
     DEVICE_HELPER,
 )
@@ -438,60 +440,104 @@ def cmd_flash_passthm(
             print(json.dumps({"ok": False, "error": "No image assets found in archive"}))
             return False
 
-        total_steps = len(items_to_write)
-        step = 0
-        failed_items = []
-
+        # Group items by target directory (e.g. /var/mobile/Library/Caches/TelephonyUI-10)
+        items_by_dir: dict[str, list[tuple[str, bytes]]] = {}
         for tdir, leaf, payload in items_to_write:
-            step += 1
+            items_by_dir.setdefault(tdir, []).append((leaf, payload))
+
+        # Check for marker files like _big or _small in the theme package
+        try:
+            with zipfile.ZipFile(path, "r") as z:
+                for entry in z.namelist():
+                    leaf_name = Path(entry).name
+                    if leaf_name in ("_big", "_small") and not entry.endswith("/"):
+                        marker_data = z.read(entry)
+                        for tdir in items_by_dir:
+                            if not any(leaf == leaf_name for leaf, _ in items_by_dir[tdir]):
+                                items_by_dir[tdir].append((leaf_name, marker_data))
+        except Exception:
+            pass
+
+        total_steps = sum(len(f) for f in items_by_dir.values())
+        processed_files = 0
+
+        print(json.dumps({
+            "type": "progress",
+            "step": 0,
+            "total": total_steps,
+            "message": f"Flashing passcode theme '{path.stem}' ({total_steps} assets)..."
+        }))
+        sys.stdout.flush()
+
+        for tdir, dir_files in items_by_dir.items():
             tdir_name = Path(tdir).name
+            base_step = processed_files
+
+            def make_progress_handler(base: int):
+                def on_atc_progress(p: dict):
+                    idx = p.get("index", 0)
+                    leaf = p.get("leaf", "")
+                    curr = min(base + idx, total_steps)
+                    print(json.dumps({
+                        "type": "progress",
+                        "step": curr,
+                        "total": total_steps,
+                        "leaf": leaf,
+                        "message": f"Writing {leaf} ({curr}/{total_steps})..."
+                    }))
+                    sys.stdout.flush()
+                return on_atc_progress
+
             print(json.dumps({
                 "type": "progress",
-                "step": step,
+                "step": base_step,
                 "total": total_steps,
-                "leaf": leaf,
-                "message": f"Writing {leaf} ({step}/{total_steps})..."
+                "message": f"Flashing {len(dir_files)} asset(s) into {tdir_name}..."
             }))
             sys.stdout.flush()
 
-            ok = write_file(udid, tdir, leaf, payload, retries=3)
+            ok = write_files_batch(
+                udid,
+                tdir,
+                dir_files,
+                retries=3,
+                progress_callback=make_progress_handler(base_step),
+            )
+
             if not ok:
-                failed_items.append((tdir, leaf, payload))
+                # If batch failed, fallback to file-by-file write for this directory
                 print(json.dumps({
                     "type": "warning",
-                    "leaf": leaf,
-                    "message": f"Initial write failed for {leaf}, queued for retry pass..."
+                    "message": f"Batch write notice for {tdir_name}, falling back to file-by-file write..."
                 }))
                 sys.stdout.flush()
-            else:
-                # Brief breather to prevent ATC socket congestion
-                time.sleep(0.08)
 
-        # Second-chance retry pass for any failed items
-        if failed_items:
-            print(json.dumps({
-                "type": "progress",
-                "step": total_steps,
-                "total": total_steps,
-                "message": f"Retrying {len(failed_items)} item(s) in second pass..."
-            }))
-            sys.stdout.flush()
-            time.sleep(1.0)
+                failed_leaves = []
+                for f_idx, (leaf, payload) in enumerate(dir_files, 1):
+                    curr = base_step + f_idx
+                    print(json.dumps({
+                        "type": "progress",
+                        "step": curr,
+                        "total": total_steps,
+                        "leaf": leaf,
+                        "message": f"[Fallback] Writing {leaf} ({curr}/{total_steps})..."
+                    }))
+                    sys.stdout.flush()
 
-            still_failed = []
-            for tdir, leaf, payload in failed_items:
-                ok = write_file(udid, tdir, leaf, payload, retries=3)
-                if not ok:
-                    still_failed.append(leaf)
-                time.sleep(0.12)
+                    single_ok = write_file(udid, tdir, leaf, payload, retries=3)
+                    if not single_ok:
+                        failed_leaves.append(leaf)
+                    time.sleep(0.08)
 
-            if still_failed:
-                print(json.dumps({
-                    "type": "error",
-                    "message": f"Could not write {len(still_failed)} file(s): {', '.join(still_failed[:5])}"
-                }))
-                sys.stdout.flush()
-                return False
+                if failed_leaves:
+                    print(json.dumps({
+                        "type": "error",
+                        "message": f"Could not write {len(failed_leaves)} file(s) in {tdir_name}: {', '.join(failed_leaves[:5])}"
+                    }))
+                    sys.stdout.flush()
+                    return False
+
+            processed_files += len(dir_files)
 
         print(json.dumps({
             "type": "success",

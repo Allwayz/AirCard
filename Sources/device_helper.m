@@ -734,10 +734,13 @@ static NSDictionary *Stage(DeviceSession *session, NSArray<NSString *> *args) {
 
     NSString *link =
         [source stringByAppendingPathComponent:@"p0/p1/p2/link"];
+    BOOL hasPayload = AFCExists(session->afc,
+                                [source stringByAppendingPathComponent:@"payload"]) ||
+                      AFCExists(session->afc,
+                                [source stringByAppendingPathComponent:@"payload_0"]);
     BOOL sourceObjects = AFCExists(session->afc, source) &&
         AFCExists(session->afc, link) &&
-        AFCExists(session->afc,
-                  [source stringByAppendingPathComponent:@"payload"]);
+        hasPayload;
     BOOL directoriesReady = EnsureDirectory(session->afc, @"Books") &&
         EnsureDirectory(session->afc, @"Books/Sync");
     BOOL booksWritten = sourceObjects && directoriesReady &&

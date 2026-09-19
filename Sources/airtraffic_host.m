@@ -73,7 +73,7 @@ int main(int argc, const char *argv[]) {
         }
 
         NSUInteger pairCount = (NSUInteger)(argc - 2) / 2;
-        if (pairCount > 4) {
+        if (pairCount > 2048) {
             PrintJSON(@{ @"ok": @NO, @"error": @"too many assets" });
             return 64;
         }
@@ -97,7 +97,7 @@ int main(int argc, const char *argv[]) {
         }
 
         signal(SIGALRM, TimeoutHandler);
-        alarm(100);
+        alarm(300);
         ATHostConnectionRef connection =
             ATHostConnectionCreate((__bridge CFStringRef)deviceIdentifier);
         if (!connection) {
@@ -187,7 +187,22 @@ int main(int argc, const char *argv[]) {
                 (__bridge CFStringRef)asset[@"identifier"],
                 CFSTR("Book"),
                 (__bridge CFStringRef)asset[@"destination"]);
-            if (index + 1 < assets.count) usleep(900000);
+            if (index > 0) {
+                NSString *leaf = [asset[@"destination"] lastPathComponent];
+                PrintJSON(@{
+                    @"type": @"atc_progress",
+                    @"index": @(index),
+                    @"total": @(assets.count - 1),
+                    @"leaf": leaf ?: @"",
+                });
+            }
+            if (index + 1 < assets.count) {
+                if (index == 0) {
+                    usleep(400000);
+                } else {
+                    usleep(60000);
+                }
+            }
         }
         sleep(2);
         ATHostConnectionRelease(connection);
