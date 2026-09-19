@@ -62,23 +62,26 @@ if [ -f "dmg_assets/AppIcon.icns" ]; then
     cp "dmg_assets/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 fi
 
-# Copy universal device_helper and airtraffic_host
+# Copy universal device_helper and airtraffic_host. Device discovery and log
+# streaming both run through device_helper, which talks to MobileDevice.framework
+# directly, so the bundle needs no libimobiledevice tooling.
 cp build/device_helper "$BIN_DIR/"
 cp build/airtraffic_host "$BIN_DIR/"
-
-# Copy universal libimobiledevice stack
-SRC_AIRLIFT="/Users/mak5er/Dev/IOS/airlift/build/LumiCards.app/Contents/Resources"
-if [ -d "$SRC_AIRLIFT/bin" ] && [ -d "$SRC_AIRLIFT/lib" ]; then
-    cp "$SRC_AIRLIFT/bin/ideviceinfo" "$BIN_DIR/"
-    cp "$SRC_AIRLIFT/bin/idevicesyslog" "$BIN_DIR/"
-    cp -R "$SRC_AIRLIFT/lib/"* "$LIB_DIR/"
-fi
 
 # Copy python backend scripts
 cp apply_card_skin.py "$RESOURCES_DIR/"
 cp aircard.py "$RESOURCES_DIR/"
 cp aircard_backend.py "$RESOURCES_DIR/"
 cp card_assets.py "$RESOURCES_DIR/"
+
+# A bundle without these cannot talk to a device at all, so fail here instead
+# of shipping an app that reports "No iPhone found" for every user.
+for tool in device_helper airtraffic_host; do
+    if [ ! -x "${BIN_DIR}/${tool}" ]; then
+        echo "ERROR: ${BIN_DIR}/${tool} is missing from the bundle." >&2
+        exit 1
+    fi
+done
 
 echo "==> [4/6] Compiling universal Swift binary (arm64 + x86_64)..."
 if [ -z "${SWIFT_SDK:-}" ]; then

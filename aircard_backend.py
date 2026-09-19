@@ -51,6 +51,7 @@ from apply_card_skin import (
 )
 from card_assets import CACHE_FILES, build_card_assets
 from aircard import (
+    find_device_helper,
     get_connected_device,
     load_saved_cards,
     save_cards,
@@ -58,9 +59,12 @@ from aircard import (
 
 
 def cmd_device():
+    if not find_device_helper():
+        print(json.dumps({"connected": False, "error": "device_helper_missing"}))
+        return
     device = get_connected_device()
     if not device:
-        print(json.dumps({"connected": False}))
+        print(json.dumps({"connected": False, "error": "no_device"}))
         return
     probe = native("probe", device["udid"])
     device["airlift_compatible"] = operation_ok(probe)

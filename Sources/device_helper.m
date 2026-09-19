@@ -1,5 +1,6 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -139,14 +140,18 @@ static void DeviceCallback(AMDeviceNotificationCallbackInfo *info,
     CFRunLoopStop(CFRunLoopGetMain());
 }
 
-static int FindTarget(void) {
-    NSDictionary *options = @{
+static NSDictionary *SubscriptionOptions(BOOL directConnectionsOnly) {
+    return @{
         @"NotificationOptionSearchForPairedDevices": @YES,
-        @"NotificationOptionSearchForPairedDevicesViaDirectConnectionsOnly": @NO,
+        @"NotificationOptionSearchForPairedDevicesViaDirectConnectionsOnly":
+            @(directConnectionsOnly),
         @"NotificationOptionSearchForWiFiPairableDevices": @NO,
         @"NotificationOptionEnableRemoteXPC": @YES,
         @"NotificationOptionEnableUSBMux": @YES,
     };
+}
+
+static int FindTarget(void) {
     AMDeviceNotificationRef subscription = NULL;
     int status = AMDeviceNotificationSubscribeWithOptions(
         DeviceCallback,
@@ -154,11 +159,113 @@ static int FindTarget(void) {
         0,
         NULL,
         &subscription,
-        (__bridge CFDictionaryRef)options);
+        (__bridge CFDictionaryRef)SubscriptionOptions(NO));
     if (status == 0)
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 30.0, false);
     if (subscription) AMDeviceNotificationUnsubscribe(subscription);
     return status;
+}
+
+#pragma mark - Device discovery & log streaming
+
+// Discovery and log streaming go straight through MobileDevice.framework, the
+// same way the flash path does, so the app needs no libimobiledevice tooling.
+
+static NSMutableArray<NSMutableDictionary *> *DiscoveredDevices;
+
+static void EnumerateCallback(AMDeviceNotificationCallbackInfo *info,
+                              void *context) {
+    (void)context;
+    if (!info || !info->device || info->message != 1) return;
+    CFStringRef identifier = AMDeviceCopyDeviceIdentifier(info->device);
+    if (!identifier) return;
+    NSString *udid =
+        CFBridgingRelease(CFStringCreateCopy(kCFAllocatorDefault, identifier));
+    CFRelease(identifier);
+    for (NSDictionary *seen in DiscoveredDevices) {
+        if ([seen[@"udid"] isEqual:udid]) return;
+    }
+
+    NSMutableDictionary *entry = [@{@"udid": udid} mutableCopy];
+    if (AMDeviceConnect(info->device) == 0) {
+        if (!AMDeviceIsPaired(info->device)) AMDevicePair(info->device);
+        if (AMDeviceValidatePairing(info->device) == 0 &&
+            AMDeviceStartSession(info->device) == 0) {
+            NSDictionary<NSString *, NSString *> *keys = @{
+                @"name": @"DeviceName",
+                @"version": @"ProductVersion",
+                @"product": @"ProductType",
+                @"buildVersion": @"BuildVersion",
+            };
+            for (NSString *field in keys) {
+                id value = CFBridgingRelease(AMDeviceCopyValue(
+                    info->device, NULL, (__bridge CFStringRef)keys[field]));
+                entry[field] =
+                    [value isKindOfClass:NSString.class] ? value : @"";
+            }
+            AMDeviceStopSession(info->device);
+        }
+        AMDeviceDisconnect(info->device);
+    }
+    [DiscoveredDevices addObject:entry];
+}
+
+static int ListDevices(void) {
+    DiscoveredDevices = [NSMutableArray array];
+    AMDeviceNotificationRef subscription = NULL;
+    int status = AMDeviceNotificationSubscribeWithOptions(
+        EnumerateCallback,
+        0,
+        0,
+        NULL,
+        &subscription,
+        (__bridge CFDictionaryRef)SubscriptionOptions(YES));
+    if (status == 0)
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.0, false);
+    if (subscription) AMDeviceNotificationUnsubscribe(subscription);
+    NSData *data = [NSJSONSerialization dataWithJSONObject:DiscoveredDevices
+                                                   options:0
+                                                     error:nil];
+    if (data) {
+        fwrite(data.bytes, 1, data.length, stdout);
+        fwrite("\n", 1, 1, stdout);
+    }
+    return status == 0 ? 0 : 2;
+}
+
+static int RunSyslog(void) {
+    if (FindTarget() != 0 || !TargetDevice) return 2;
+    AMDeviceRef device = TargetDevice;
+    if (AMDeviceConnect(device) != 0) return 2;
+    if (!AMDeviceIsPaired(device)) AMDevicePair(device);
+    if (AMDeviceValidatePairing(device) != 0 || AMDeviceStartSession(device) != 0) {
+        AMDeviceDisconnect(device);
+        return 2;
+    }
+
+    AMDServiceConnectionRef connection = NULL;
+    if (AMDeviceSecureStartService(
+            device, CFSTR("com.apple.syslog_relay"), NULL, &connection) != 0 ||
+        !connection) {
+        AMDeviceStopSession(device);
+        AMDeviceDisconnect(device);
+        return 2;
+    }
+
+    signal(SIGPIPE, SIG_IGN);
+    int sock = AMDServiceConnectionGetSocket(connection);
+    char buffer[65536];
+    while (sock >= 0) {
+        ssize_t received = recv(sock, buffer, sizeof(buffer), 0);
+        if (received <= 0) break;
+        fwrite(buffer, 1, (size_t)received, stdout);
+        fflush(stdout);
+    }
+
+    AMDServiceConnectionInvalidate(connection);
+    AMDeviceStopSession(device);
+    AMDeviceDisconnect(device);
+    return 0;
 }
 
 static void OpenSession(DeviceSession *session) {
@@ -864,8 +971,26 @@ static NSDictionary *FinishWrite(DeviceSession *session, NSArray<NSString *> *ar
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc < 3) return 64;
+        if (argc < 2) return 64;
         NSString *command = [NSString stringWithUTF8String:argv[1]];
+
+        // Discovery takes no UDID and log streaming takes no Airlift session,
+        // so both are handled before the targeted session is opened.
+        if ([command isEqual:@"list"] && argc == 2) return ListDevices();
+        if ([command isEqual:@"syslog"] && argc == 3) {
+            TargetIdentifier = CFStringCreateWithCString(
+                kCFAllocatorDefault, argv[2], kCFStringEncodingUTF8);
+            if (!TargetIdentifier) return 64;
+            int status = RunSyslog();
+            if (TargetDevice) {
+                CFRelease(TargetDevice);
+                TargetDevice = NULL;
+            }
+            CFRelease(TargetIdentifier);
+            return status;
+        }
+
+        if (argc < 3) return 64;
         TargetIdentifier = CFStringCreateWithCString(
             kCFAllocatorDefault, argv[2], kCFStringEncodingUTF8);
         if (!TargetIdentifier) return 64;

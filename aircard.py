@@ -12,7 +12,6 @@ import os
 import posixpath
 import re
 import secrets
-import shutil
 import subprocess
 import sys
 import time
@@ -79,64 +78,65 @@ def save_cards(cards: list[str]):
         pass
 
 
-def get_connected_device() -> dict | None:
-    """Finds connected iPhone via ideviceinfo."""
-    candidates = [
-        str(Path(__file__).resolve().parent / "bin" / "ideviceinfo"),
-        "/Applications/AirCard.app/Contents/Resources/bin/ideviceinfo",
-        shutil.which("ideviceinfo"),
-        "/opt/homebrew/bin/ideviceinfo",
-        "/usr/local/bin/ideviceinfo",
-    ]
-    bin_cmd = "ideviceinfo"
-    for c in candidates:
-        if c and Path(c).is_file() and os.access(c, os.X_OK):
-            bin_cmd = c
-            break
+def find_device_helper() -> str | None:
+    """Finds the bundled device helper, the app's only device-communication tool."""
+    root = Path(__file__).resolve().parent
+    candidates = [root / "bin" / "device_helper", root / "build" / "device_helper"]
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
+
+def list_devices() -> list[dict]:
+    """Enumerates paired devices reachable over USB.
+
+    Wi-Fi-paired devices can appear here too, and an entry whose session could
+    not be opened is reported with an empty `product`.
+    """
+    helper = find_device_helper()
+    if not helper:
+        return []
     try:
         output = subprocess.check_output(
-            [bin_cmd, "-s"], text=True, stderr=subprocess.DEVNULL
+            [helper, "list"], text=True, stderr=subprocess.DEVNULL, timeout=30
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    for line in reversed(output.splitlines()):
+        try:
+            devices = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(devices, list):
+            return [d for d in devices if isinstance(d, dict)]
+    return []
+
+
+def get_connected_device() -> dict | None:
+    """Picks the connected iPhone out of the enumerated devices."""
+    usable = [d for d in list_devices() if d.get("udid") and d.get("product")]
+    if not usable:
         return None
-
-    info = {}
-    for line in output.splitlines():
-        if ":" in line:
-            key, val = line.split(":", 1)
-            info[key.strip()] = val.strip()
-
-    udid = info.get("UniqueDeviceID")
-    name = info.get("DeviceName", "iPhone")
-    version = info.get("ProductVersion", "Unknown")
-    product = info.get("ProductType", "iPhone")
-
-    if not udid:
-        return None
+    # Enumeration order is not stable, and iPads can appear alongside the iPhone.
+    iphones = [d for d in usable if str(d["product"]).startswith("iPhone")]
+    device = (iphones or usable)[0]
 
     return {
-        "udid": udid,
-        "name": name,
-        "version": version,
-        "product": product,
+        "udid": device["udid"],
+        "name": device.get("name") or "iPhone",
+        "version": device.get("version") or "Unknown",
+        "product": device["product"],
     }
 
 
-def find_syslog_executable() -> str:
-    """Finds path to idevicesyslog utility."""
-    candidates = [
-        str(Path(__file__).resolve().parent / "bin" / "idevicesyslog"),
-        "/Applications/AirCard.app/Contents/Resources/bin/idevicesyslog",
-        shutil.which("idevicesyslog"),
-        "/opt/homebrew/bin/idevicesyslog",
-        "/usr/local/bin/idevicesyslog",
-        "/usr/bin/idevicesyslog",
-    ]
-    for c in candidates:
-        if c and Path(c).is_file() and os.access(c, os.X_OK):
-            return c
-    return "idevicesyslog"
+def syslog_command(udid: str) -> list[str] | None:
+    """Builds the command that streams the device log, or None if unbundled."""
+    helper = find_device_helper()
+    if not helper:
+        return None
+    return [helper, "syslog", udid]
 
 
 def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> list[str]:
@@ -151,8 +151,10 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
     print("Press ENTER when finished.")
     print("=" * 60 + "\n")
 
-    syslog_bin = find_syslog_executable()
-    cmd = [syslog_bin, "-u", udid, "--no-colors"]
+    cmd = syslog_command(udid)
+    if not cmd:
+        print("\u274c Bundled device_helper is missing \u2014 cannot read the device log.")
+        return list(existing_cards or [])
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,

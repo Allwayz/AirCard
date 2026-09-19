@@ -11,6 +11,7 @@ struct DeviceInfo: Codable {
     var product: String?
     var airlift_compatible: Bool?
     var connected: Bool
+    var error: String?
 }
 
 struct CardItem: Identifiable, Hashable {
@@ -544,21 +545,18 @@ class AppViewModel: ObservableObject {
         return URL(fileURLWithPath: "/usr/bin/python3")
     }
     
-    nonisolated private static var syslogExecutableURL: URL {
+    nonisolated private static var deviceHelperExecutableURL: URL? {
         var candidates: [String] = []
         if let res = Bundle.main.resourceURL {
-            candidates.append(res.appendingPathComponent("bin/idevicesyslog").path)
+            candidates.append(res.appendingPathComponent("bin/device_helper").path)
         }
-        candidates.append("/Applications/AirCard.app/Contents/Resources/bin/idevicesyslog")
-        candidates.append("/opt/homebrew/bin/idevicesyslog")
-        candidates.append("/usr/local/bin/idevicesyslog")
-        candidates.append("/usr/bin/idevicesyslog")
+        candidates.append("/Applications/AirCard.app/Contents/Resources/bin/device_helper")
         for path in candidates {
             if FileManager.default.isExecutableFile(atPath: path) {
                 return URL(fileURLWithPath: path)
             }
         }
-        return URL(fileURLWithPath: "/usr/bin/idevicesyslog")
+        return nil
     }
     
     nonisolated private static var processEnvironment: [String: String] {
@@ -748,6 +746,9 @@ class AppViewModel: ObservableObject {
                         if dev.connected {
                             self.statusText = "Connected to \(dev.name ?? "iPhone")"
                             self.log("Device connected: \(dev.name ?? "iPhone") (\(dev.product ?? ""), iOS \(dev.version ?? ""))")
+                        } else if dev.error == "device_helper_missing" {
+                            self.statusText = "Device tools are missing from this build."
+                            self.log("Bundled device_helper not found — detection cannot run.")
                         } else {
                             self.statusText = "No iPhone found. Please connect via USB."
                         }
@@ -774,15 +775,24 @@ class AppViewModel: ObservableObject {
     
     func startCardScanning() {
         guard !isScanningCards else { return }
+        guard let deviceHelper = AppViewModel.deviceHelperExecutableURL else {
+            errorMessage = "Device tools are missing from this build."
+            log("Bundled device_helper not found — cannot scan.")
+            return
+        }
+        guard let udid = device?.udid else {
+            errorMessage = "No iPhone connected."
+            return
+        }
         isScanningCards = true
         statusText = "Double-click Side button, pass Face ID, then tap your card..."
         log("Started scanning device logs for cards...")
         
         let pipe = Pipe()
         let proc = Process()
-        proc.executableURL = AppViewModel.syslogExecutableURL
+        proc.executableURL = deviceHelper
         proc.environment = AppViewModel.processEnvironment
-        proc.arguments = ["-q"]
+        proc.arguments = ["syslog", udid]
         proc.standardOutput = pipe
         proc.standardError = Pipe()
         
