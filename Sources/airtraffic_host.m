@@ -96,6 +96,7 @@ int main(int argc, const char *argv[]) {
             return 64;
         }
 
+        signal(SIGPIPE, SIG_IGN);
         signal(SIGALRM, TimeoutHandler);
         alarm(300);
         ATHostConnectionRef connection =
@@ -109,7 +110,10 @@ int main(int argc, const char *argv[]) {
         BOOL syncAllowed = NO;
         for (NSUInteger index = 0; index < 8 && !syncAllowed; index++) {
             CFDictionaryRef raw = ATHostConnectionReadMessage(connection);
-            if (!raw) continue;
+            if (!raw) {
+                usleep(100000);
+                continue;
+            }
             NSString *name = (__bridge NSString *)ATCFMessageGetName(raw);
             syncAllowed = [name isEqual:@"SyncAllowed"];
             CFRelease(raw);
@@ -134,7 +138,10 @@ int main(int argc, const char *argv[]) {
         BOOL ready = NO;
         for (NSUInteger index = 0; index < 12 && !ready; index++) {
             CFDictionaryRef raw = ATHostConnectionReadMessage(connection);
-            if (!raw) continue;
+            if (!raw) {
+                usleep(100000);
+                continue;
+            }
             NSString *name = (__bridge NSString *)ATCFMessageGetName(raw);
             ready = [name isEqual:@"ReadyForSync"];
             CFRelease(raw);
@@ -154,7 +161,10 @@ int main(int argc, const char *argv[]) {
         NSDictionary *manifest = nil;
         for (NSUInteger index = 0; index < 20 && !manifest; index++) {
             CFDictionaryRef raw = ATHostConnectionReadMessage(connection);
-            if (!raw) continue;
+            if (!raw) {
+                usleep(100000);
+                continue;
+            }
             NSString *name = (__bridge NSString *)ATCFMessageGetName(raw);
             if ([name isEqual:@"AssetManifest"]) {
                 id value = (__bridge id)ATCFMessageGetParam(

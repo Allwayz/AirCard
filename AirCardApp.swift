@@ -509,13 +509,10 @@ class AppViewModel: ObservableObject {
     
     init() {
         let cwd = FileManager.default.currentDirectoryPath
-        let defaultWorkspace = "/Users/mak5er/Dev/IOS/AirCard"
-        if FileManager.default.fileExists(atPath: cwd + "/aircard_backend.py") {
-            self.scriptDir = cwd
-        } else if let resPath = Bundle.main.resourcePath, FileManager.default.fileExists(atPath: resPath + "/aircard_backend.py") {
+        if let resPath = Bundle.main.resourcePath, FileManager.default.fileExists(atPath: resPath + "/aircard_backend.py") {
             self.scriptDir = resPath
-        } else if FileManager.default.fileExists(atPath: defaultWorkspace + "/aircard_backend.py") {
-            self.scriptDir = defaultWorkspace
+        } else if FileManager.default.fileExists(atPath: cwd + "/aircard_backend.py") {
+            self.scriptDir = cwd
         } else {
             self.scriptDir = Bundle.main.bundleURL.deletingLastPathComponent().path
         }
@@ -732,7 +729,7 @@ class AppViewModel: ObservableObject {
             
             let pipe = Pipe()
             process.standardOutput = pipe
-            process.standardError = Pipe()
+            process.standardError = FileHandle.nullDevice
             
             do {
                 try process.run()
@@ -752,6 +749,11 @@ class AppViewModel: ObservableObject {
                         } else {
                             self.statusText = "No iPhone found. Please connect via USB."
                         }
+                    }
+                } else {
+                    await MainActor.run {
+                        self.isCheckingDevice = false
+                        self.statusText = "No iPhone found. Please connect via USB."
                     }
                 }
             } catch {
@@ -794,7 +796,7 @@ class AppViewModel: ObservableObject {
         proc.environment = AppViewModel.processEnvironment
         proc.arguments = ["syslog", udid]
         proc.standardOutput = pipe
-        proc.standardError = Pipe()
+        proc.standardError = FileHandle.nullDevice
         
         self.scanProcess = proc
         
@@ -943,8 +945,17 @@ class AppViewModel: ObservableObject {
                 flashProcess.arguments = ["aircard_backend.py", "--flash", udid, card.id, preparedPath]
                 
                 let pipe = Pipe()
+                let errPipe = Pipe()
                 flashProcess.standardOutput = pipe
-                flashProcess.standardError = Pipe()
+                flashProcess.standardError = errPipe
+                errPipe.fileHandleForReading.readabilityHandler = { h in
+                    let data = h.availableData
+                    if !data.isEmpty, let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                        Task { @MainActor in
+                            self.log("  [err] \(text)")
+                        }
+                    }
+                }
                 
                 do {
                     try flashProcess.run()
@@ -1010,6 +1021,7 @@ class AppViewModel: ObservableObject {
                     await handleJSONLine(finalLine)
                 }
                 flashProcess.waitUntilExit()
+                errPipe.fileHandleForReading.readabilityHandler = nil
 
                 if flashProcess.terminationStatus != 0 {
                     flashFailed = true
@@ -1054,7 +1066,7 @@ class AppViewModel: ObservableObject {
             
             let pipe = Pipe()
             proc.standardOutput = pipe
-            proc.standardError = Pipe()
+            proc.standardError = FileHandle.nullDevice
             try? proc.run()
             
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -1132,8 +1144,17 @@ class AppViewModel: ObservableObject {
             ]
             
             let pipe = Pipe()
+            let errPipe = Pipe()
             proc.standardOutput = pipe
-            proc.standardError = Pipe()
+            proc.standardError = errPipe
+            errPipe.fileHandleForReading.readabilityHandler = { h in
+                let data = h.availableData
+                if !data.isEmpty, let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    Task { @MainActor in
+                        self.log("  [err] \(text)")
+                    }
+                }
+            }
             try? proc.run()
             
             let handle = pipe.fileHandleForReading
@@ -1188,6 +1209,7 @@ class AppViewModel: ObservableObject {
             }
             
             proc.waitUntilExit()
+            errPipe.fileHandleForReading.readabilityHandler = nil
             let exitCode = proc.terminationStatus
             
             await MainActor.run {
@@ -1501,7 +1523,15 @@ struct WalletCardView: View {
                                 card.isSelected = true
                             }
                         } else if let img = item as? NSImage {
+                            let tempURL = FileManager.default.temporaryDirectory
+                                .appendingPathComponent("aircard_drop_\(UUID().uuidString).png")
+                            if let tiff = img.tiffRepresentation,
+                               let rep = NSBitmapImageRep(data: tiff),
+                               let pngData = rep.representation(using: .png, properties: [:]) {
+                                try? pngData.write(to: tempURL)
+                            }
                             Task { @MainActor in
+                                card.customImageURL = tempURL
                                 card.customImage = img
                                 card.isSelected = true
                             }

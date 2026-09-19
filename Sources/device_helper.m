@@ -971,6 +971,7 @@ static NSDictionary *FinishWrite(DeviceSession *session, NSArray<NSString *> *ar
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        signal(SIGPIPE, SIG_IGN);
         if (argc < 2) return 64;
         NSString *command = [NSString stringWithUTF8String:argv[1]];
 

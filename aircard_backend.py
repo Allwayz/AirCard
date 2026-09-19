@@ -147,56 +147,54 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
     step = 0
     all_ok = True
 
-    for asset, payload in asset_payloads:
+    step += 1
+    print(json.dumps({
+        "type": "progress",
+        "card": card_hash,
+        "step": step,
+        "total": total_steps,
+        "message": f"Writing {len(asset_payloads)} artwork files (fast batch)..."
+    }))
+    sys.stdout.flush()
+
+    try:
+        ok = write_files_batch(udid, pkpass_dir, asset_payloads)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        ok = False
+
+    if not ok:
+        # Fallback to individual writes if batch fails
+        for asset, payload in asset_payloads:
+            try:
+                ok_single = write_file(udid, pkpass_dir, asset, payload)
+            except Exception:
+                ok_single = False
+            if not ok_single:
+                all_ok = False
+
+    # Clear cache with batch
+    cache_leaves = [(leaf, b"corrupted") for leaf in CACHE_FILES]
+    for ext in [".cache", ".pkcache"]:
+        cache_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}{ext}"
         step += 1
         print(json.dumps({
             "type": "progress",
             "card": card_hash,
             "step": step,
             "total": total_steps,
-            "asset": asset,
-            "message": f"Writing {asset}..."
+            "message": f"Invalidating cache ({ext})..."
         }))
         sys.stdout.flush()
         try:
-            ok = write_file(udid, pkpass_dir, asset, payload)
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            ok = False
-        if not ok:
-            all_ok = False
-            print(json.dumps({
-                "type": "error",
-                "card": card_hash,
-                "asset": asset,
-                "message": f"Failed to write {asset}"
-            }))
-            sys.stdout.flush()
-
-    # Clear cache
-    for ext in [".cache", ".pkcache"]:
-        cache_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}{ext}"
-        for leaf in CACHE_FILES:
-            step += 1
-            print(json.dumps({
-                "type": "progress",
-                "card": card_hash,
-                "step": step,
-                "total": total_steps,
-                "message": f"Invalidating cache ({leaf} in {ext})..."
-            }))
-            sys.stdout.flush()
-            try:
-                ok = write_file(udid, cache_dir, leaf, b"corrupted")
-            except (OSError, RuntimeError, subprocess.SubprocessError):
-                ok = False
-            if not ok:
-                all_ok = False
-                print(json.dumps({
-                    "type": "error",
-                    "card": card_hash,
-                    "message": f"Failed to invalidate cache ({leaf} in {ext})"
-                }))
-                sys.stdout.flush()
+            ok_cache = write_files_batch(udid, cache_dir, cache_leaves)
+        except Exception:
+            ok_cache = False
+        if not ok_cache:
+            for leaf, payload in cache_leaves:
+                try:
+                    write_file(udid, cache_dir, leaf, payload)
+                except Exception:
+                    pass
 
     step += 1
     if not all_ok:

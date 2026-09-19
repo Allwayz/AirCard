@@ -363,21 +363,16 @@ def invalidate_cache(udid: str, card_hash: str) -> bool:
 
 
 def main():
-    udid = "00008120-001A1D0A1EE9A01E"
-    batter_path = Path("/Users/mak5er/Downloads/CardChanger.batter")
-    if not batter_path.is_file():
-        print(f"Error: {batter_path} not found")
+    if len(sys.argv) < 3:
+        print("Usage: apply_card_skin.py <udid> <image_path> [card_hash ...]")
+        return
+    udid = sys.argv[1]
+    img_path = Path(sys.argv[2])
+    if not img_path.is_file():
+        print(f"Error: {img_path} not found")
         sys.exit(1)
-
-    with zipfile.ZipFile(batter_path, "r") as z:
-        img_data = z.read("CardChanger/container/RENAME_ME.pkpass/cardBackgroundCombined@2x.png")
-
-    hashes = [
-        "OM6NYhwXMZrAw0sRUjR62wmF4ZQ=",
-        "M6nDwZrkYbFlsodLgCbvyFZQ1cc=",
-        "kJL-D0rr-SZhbj2c8nK-OQ9hCMY=",
-        "hwAtAmHKYwsQrJbT5cTNDsaxVME=",
-    ]
+    img_data = img_path.read_bytes()
+    hashes = sys.argv[3:]
 
     print(f"Loaded image from batter: {len(img_data)} bytes")
     print(f"Targeting {len(hashes)} cards on device {udid}...")
