@@ -4,6 +4,10 @@
 > **Tested on iOS 27 release.**
 > Powered by the `airlift` AirTraffic sync exploit.
 
+<p align="left">
+  <a href="https://www.paypal.com/donate/?hosted_button_id=98QRTC2HFRA4Y"><img src="https://img.shields.io/badge/Donate-PayPal-00457C?style=flat-square&logo=paypal" alt="Donate with PayPal" /></a>
+</p>
+
 ---
 
 ## Features
@@ -82,3 +86,14 @@ This builds universal binaries (`arm64` + `x86_64`), bundles dependencies into `
 
 ## Credits
 - Core exploit based on `airlift` (AirTraffic sync escape).
+
+---
+
+## Support
+
+If you find AirCard useful, you can support future development:
+
+- **PayPal**: [Donate via PayPal](https://www.paypal.com/donate/?hosted_button_id=98QRTC2HFRA4Y)
+- **TON**: `UQBm9KPhtMw-XVVjirUoa09wzrlyWsbeZhKfefl1Uw-qNZ-r`
+- **USDT (TRC20)**: `TDkDMCyjYxgvkWUnQiF5Erk2RyPQMT6G1n`
+- **USDT / BNB (BEP20)**: `0x0954dc491c502849d04956ef74634aa5931a08e8`
