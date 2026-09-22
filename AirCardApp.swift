@@ -9,6 +9,9 @@ struct DeviceInfo: Codable {
     var name: String?
     var version: String?
     var product: String?
+    var language: String?
+    var locale: String?
+    var bold_text: Bool?
     var airlift_compatible: Bool?
     var connected: Bool
     var error: String?
@@ -743,6 +746,7 @@ class AppViewModel: ObservableObject {
                         if dev.connected {
                             self.statusText = "Connected to \(dev.name ?? "iPhone")"
                             self.log("Device connected: \(dev.name ?? "iPhone") (\(dev.product ?? ""), iOS \(dev.version ?? ""))")
+                            self.applyDevicePreferences(from: dev)
                         } else if dev.error == "device_helper_missing" {
                             self.statusText = "Device tools are missing from this build."
                             self.log("Bundled device_helper not found — detection cannot run.")
@@ -763,6 +767,36 @@ class AppViewModel: ObservableObject {
                 }
             }
         }
+    }
+    
+    func applyDevicePreferences(from dev: DeviceInfo) {
+        // 1. Auto-detect TelephonyUI version based on iOS major version
+        if let verStr = dev.version, let major = Int(verStr.components(separatedBy: ".").first ?? "") {
+            if major >= 18 {
+                self.targetTelephonyVersion = "TelephonyUI-10"
+            } else if major >= 16 {
+                self.targetTelephonyVersion = "TelephonyUI-9"
+            } else {
+                self.targetTelephonyVersion = "TelephonyUI-8"
+            }
+        }
+        
+        // 2. Auto-detect language
+        if let langCode = dev.language?.components(separatedBy: "-").first?.lowercased() {
+            for target in PasscodeLanguageTarget.allCases {
+                if target.code == langCode {
+                    self.passcodeLanguageTarget = target
+                    break
+                }
+            }
+        }
+        
+        // 3. Auto-detect bold text
+        if let isBold = dev.bold_text {
+            self.passcodeBoldTarget = isBold ? .boldOnly : .regularOnly
+        }
+        
+        self.log("  ⚡ Auto-configured passcode target: \(self.targetTelephonyVersion), language: \(self.passcodeLanguageTarget.rawValue), font: \(self.passcodeBoldTarget.rawValue)")
     }
     
     // MARK: - Live Card Scanner
@@ -2933,6 +2967,17 @@ struct ContentView: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
                 Spacer()
+                if let dev = vm.device, dev.connected {
+                    Button(action: { vm.applyDevicePreferences(from: dev) }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkles")
+                            Text("Auto-detect")
+                        }
+                        .font(.system(size: 9, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Reset to iPhone's detected language and font style")
+                }
             }
             
             // 1. Language Target Selector
