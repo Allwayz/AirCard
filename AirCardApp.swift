@@ -796,9 +796,19 @@ class AppViewModel: ObservableObject {
         proc.environment = AppViewModel.processEnvironment
         proc.arguments = ["syslog", udid]
         proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
+        proc.standardError = pipe
         
         self.scanProcess = proc
+        // Launch before yielding so Stop cannot race with a pending launch.
+        do {
+            try proc.run()
+        } catch {
+            scanProcess = nil
+            isScanningCards = false
+            statusText = "Could not start card scanning."
+            log("Syslog monitor failed to start: \(error.localizedDescription)")
+            return
+        }
         
         let dummyHashes = [
             "M6nDwZrkYbFlsodLgCbvyFZQ1cc=",
@@ -808,23 +818,32 @@ class AppViewModel: ObservableObject {
         
         Task.detached {
             do {
-                try proc.run()
                 let handle = pipe.fileHandleForReading
                 var buffer = Data()
                 
-                while proc.isRunning {
-                    let chunk = handle.availableData
+                // Drain the pipe through EOF, including the last buffered record
+                // when the helper exits. isRunning can become false too early.
+                while true {
+                    let chunk = try handle.read(upToCount: 65536) ?? Data()
                     if chunk.isEmpty {
-                        usleep(100000)
-                        continue
+                        if buffer.isEmpty { break }
+                        buffer.append(0x0A)
+                    } else {
+                        buffer.append(chunk)
                     }
-                    buffer.append(chunk)
                     
                     while let newlineRange = buffer.range(of: Data([0x0A])) {
                         let lineData = buffer.subdata(in: buffer.startIndex..<newlineRange.lowerBound)
                         buffer.removeSubrange(buffer.startIndex..<newlineRange.upperBound)
                         
                         guard let line = String(data: lineData, encoding: .utf8) else { continue }
+                        if line.hasPrefix("AirCard scanner: ") {
+                            await MainActor.run {
+                                guard self.scanProcess === proc else { return }
+                                self.log(line)
+                            }
+                            continue
+                        }
                         let lower = line.lowercased()
                         
                         let isWalletSubsystem = lower.contains("passd") ||
@@ -859,6 +878,7 @@ class AppViewModel: ObservableObject {
                                     if dummyHashes.contains(candidate) { continue }
                                     
                                     await MainActor.run {
+                                        guard self.scanProcess === proc else { return }
                                         if !self.cards.contains(where: { $0.id == candidate }) {
                                             self.cards.append(CardItem(id: candidate, isSelected: true))
                                             self.saveCards()
@@ -870,19 +890,35 @@ class AppViewModel: ObservableObject {
                             }
                         }
                     }
+                    if chunk.isEmpty { break }
+                }
+                proc.waitUntilExit()
+                await MainActor.run {
+                    guard self.scanProcess === proc else { return }
+                    self.scanProcess = nil
+                    self.isScanningCards = false
+                    self.statusText = "Card scanning ended. Check the log and reconnect the iPhone to retry."
+                    self.log("Syslog monitor exited (status \(proc.terminationStatus)). Total cards: \(self.cards.count).")
+                    self.saveCards()
                 }
             } catch {
+                if proc.isRunning { proc.terminate() }
+                proc.waitUntilExit()
                 await MainActor.run {
+                    guard self.scanProcess === proc else { return }
+                    self.scanProcess = nil
                     self.log("Syslog monitor stopped: \(error.localizedDescription)")
                     self.isScanningCards = false
+                    self.statusText = "Card scanning failed. Check the log and retry."
                 }
             }
         }
     }
     
     func stopCardScanning() {
-        scanProcess?.terminate()
+        let process = scanProcess
         scanProcess = nil
+        if let process, process.isRunning { process.terminate() }
         isScanningCards = false
         if statusText.contains("Double-click Side button") {
             statusText = "Ready"

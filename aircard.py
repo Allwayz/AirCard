@@ -158,7 +158,7 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
     )
@@ -179,6 +179,10 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
                 line = process.stdout.readline()
                 if not line:
                     break
+
+                if line.startswith("AirCard scanner: "):
+                    print(line.rstrip())
+                    continue
 
                 lower = line.lower()
                 is_wallet = (
