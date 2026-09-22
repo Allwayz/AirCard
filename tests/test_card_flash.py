@@ -100,7 +100,9 @@ class CardFlashTests(unittest.TestCase):
             output = io.StringIO()
 
             with (
+                patch.object(aircard_backend, "write_files_batch", Mock(return_value=False)),
                 patch.object(aircard_backend, "write_file", write_file),
+                patch.object(aircard_backend, "remove_files", Mock(return_value=True)),
                 redirect_stdout(output),
             ):
                 result = aircard_backend.cmd_flash("device", "card", str(image_path))
