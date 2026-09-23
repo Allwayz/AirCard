@@ -56,7 +56,7 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 </plist>
 EOF
 
-echo "==> [3/6] Bundling universal tools & libraries..."
+echo "==> [3/6] Bundling universal tools, libraries & card skins..."
 # Copy App Icon
 if [ -f "dmg_assets/AppIcon.icns" ]; then
     cp "dmg_assets/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
@@ -73,6 +73,14 @@ cp apply_card_skin.py "$RESOURCES_DIR/"
 cp aircard.py "$RESOURCES_DIR/"
 cp aircard_backend.py "$RESOURCES_DIR/"
 cp card_assets.py "$RESOURCES_DIR/"
+
+# Bundle the built-in Card Library (manifest + generated original artwork).
+if [ ! -f "CardLibrary/manifest.json" ]; then
+    echo "ERROR: CardLibrary/manifest.json is missing." >&2
+    exit 1
+fi
+rm -rf "${RESOURCES_DIR}/CardLibrary"
+cp -R CardLibrary "${RESOURCES_DIR}/CardLibrary"
 
 # A bundle without these cannot talk to a device at all, so fail here instead
 # of shipping an app that reports "No iPhone found" for every user.
@@ -91,8 +99,17 @@ if [ -z "${SWIFT_SDK:-}" ]; then
         SWIFT_SDK="$CLT_SWIFTUI_SDK"
     fi
 fi
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 AirCardApp.swift -o build/AirCard_arm64
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift -o build/AirCard_x86_64
+
+# AirCard is currently maintained as one large Swift source file. Keep the
+# upstream file untouched and generate a build-only copy with the Card Library
+# hooks injected; this makes future upstream rebases explicit and easy to audit.
+python3 scripts/integrate_card_library.py
+GENERATED_APP_SOURCE="build/AirCardApp.generated.swift"
+
+swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 \
+    "$GENERATED_APP_SOURCE" CardLibrarySupport.swift -o build/AirCard_arm64
+swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 \
+    "$GENERATED_APP_SOURCE" CardLibrarySupport.swift -o build/AirCard_x86_64
 lipo -create -output "${MACOS_DIR}/AirCard" build/AirCard_arm64 build/AirCard_x86_64
 chmod +x "${MACOS_DIR}/AirCard"
 
