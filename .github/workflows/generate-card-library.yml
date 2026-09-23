@@ -3,6 +3,7 @@ name: Generate Card Library
 on:
   push:
     branches:
+      - main
       - feature/card-library
     paths:
       - 'CardLibrary/generate_skins.py'
