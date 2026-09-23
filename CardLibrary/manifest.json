@@ -1,20 +1,193 @@
 {
   "schema_version": 1,
   "library": "AirCard Community Skin Library",
-  "canvas": {"width": 1536, "height": 969, "aspect_ratio": 1.585139, "format": "PNG"},
+  "canvas": {
+    "width": 1536,
+    "height": 969,
+    "aspect_ratio": 1.585139,
+    "format": "PNG"
+  },
   "license_note": "Original artwork created for this fork. Third-party names and trademarks referenced only to describe design inspiration; no affiliation or endorsement is implied.",
   "cards": [
-    {"id":"transit-singapore-singapore-link-classic","name":"Singapore Link Classic","category":"transit","region":"Singapore","file":"transit/singapore/singapore-link-classic.png","size":[1536,969],"format":"png","inspired_by":"EZ-Link-era blue/green stripe language","original_artwork":true,"sha256":"e319e16488bf3088391636fd641ddcaf3158061be94c0bdc1b1d694dfc2c9cde"},
-    {"id":"transit-uk-london-blue-line","name":"London Blue Line","category":"transit","region":"United Kingdom","file":"transit/uk/london-blue-line.png","size":[1536,969],"format":"png","inspired_by":"Oyster-era blue/white/navy language","original_artwork":true,"sha256":"b7b7e1eda3416bba472830faa97edf03f0bd37b3b0e2a79167901fded7a5ce6c"},
-    {"id":"transit-hong-kong-hk-loop","name":"Hong Kong Loop","category":"transit","region":"Hong Kong","file":"transit/hong-kong/hk-loop.png","size":[1536,969],"format":"png","inspired_by":"Octopus-style dark field with looping ribbon","original_artwork":true,"sha256":"14eafb5b53ee9f92389e3c1e8d2371721426769319d029d14c59bded5ad7a558"},
-    {"id":"transit-japan-tokyo-green-rail","name":"Tokyo Green Rail","category":"transit","region":"Japan","file":"transit/japan/tokyo-green-rail.png","size":[1536,969],"format":"png","inspired_by":"Suica-era silver/green language","original_artwork":true,"sha256":"046e46e8dcb2aff2b884938175f22a5a7e0fd695889e55fbb7e11aebef54c2f2"},
-    {"id":"transit-korea-seoul-black-stripe","name":"Seoul Black Stripe","category":"transit","region":"South Korea","file":"transit/korea/seoul-black-stripe.png","size":[1536,969],"format":"png","inspired_by":"T-money matte black stripe language","original_artwork":true,"sha256":"5163676ac9401d0cfba58cae62de6959ae7fc4b728bdb5ed1a096a30e09e355b"},
-    {"id":"transit-france-paris-navigation-blue","name":"Paris Navigation Blue","category":"transit","region":"France","file":"transit/france/paris-navigation-blue.png","size":[1536,969],"format":"png","inspired_by":"Navigo blue/black language","original_artwork":true,"sha256":"bb87df984e72b7227cf716114c2bd7f737679e5b0537684e403d7ed3969272ff"},
-    {"id":"transit-usa-new-york-swipe-yellow","name":"New York Swipe Yellow","category":"transit","region":"United States","file":"transit/usa/new-york-swipe-yellow.png","size":[1536,969],"format":"png","inspired_by":"MetroCard yellow/blue swipe-era language","original_artwork":true,"sha256":"af51cc27a63eaf539aef7cdd669221c7820ed796c0faf0e077747f69a567be58"},
-    {"id":"transit-australia-sydney-opal-night","name":"Sydney Opal Night","category":"transit","region":"Australia","file":"transit/australia/sydney-opal-night.png","size":[1536,969],"format":"png","inspired_by":"Opal charcoal + spectrum language","original_artwork":true,"sha256":"175c1e7e6e79c99fadedf3adc64009fff6538b2d7b85164d3122e0d55de34814"},
-    {"id":"payment-singapore-lion-city-night-visa","name":"Lion City Night","category":"payment","region":"Singapore","file":"payment/singapore/lion-city-night-visa.png","size":[1536,969],"format":"png","inspired_by":"Visa-style city night concept","original_artwork":true,"sha256":"a982cca20a8d566d6bff3a462f828c8797d114ed082abb8b06e1b5b3db9406b0"},
-    {"id":"payment-singapore-marina-jade-visa","name":"Marina Jade","category":"payment","region":"Singapore","file":"payment/singapore/marina-jade-visa.png","size":[1536,969],"format":"png","inspired_by":"Visa-style jade / marina concept","original_artwork":true,"sha256":"eff1bc52d3619933439fa8b6fa19aa8d9a45f1055c7fb7b6b4b40592837ddd23"},
-    {"id":"payment-uk-britannia-navy-visa","name":"Britannia Navy","category":"payment","region":"United Kingdom","file":"payment/uk/britannia-navy-visa.png","size":[1536,969],"format":"png","inspired_by":"Visa-style navy British geometry","original_artwork":true,"sha256":"40da8f3e4f05938aa975a6369db0c4d956e0e34513a7ef2254e5f84bedd7bfd1"},
-    {"id":"payment-uk-london-fog-visa","name":"London Fog","category":"payment","region":"United Kingdom","file":"payment/uk/london-fog-visa.png","size":[1536,969],"format":"png","inspired_by":"Visa-style fog / bridge concept","original_artwork":true,"sha256":"ea4af199d850ad9e2269f6a465beed792beedada297a445f87bde9faf850d0d7"}
+    {
+      "id": "transit-singapore-singapore-link-classic",
+      "name": "Singapore Link Classic",
+      "category": "transit",
+      "region": "Singapore",
+      "file": "transit/singapore/singapore-link-classic.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "EZ-Link-era blue/green stripe language",
+      "original_artwork": true,
+      "sha256": "3bc2a29e4cb50c6d68c3d12358e85ed49ffa4b91110d00f47b7d175e7d4888f1"
+    },
+    {
+      "id": "transit-uk-london-blue-line",
+      "name": "London Blue Line",
+      "category": "transit",
+      "region": "United Kingdom",
+      "file": "transit/uk/london-blue-line.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Oyster-era blue/white/navy language",
+      "original_artwork": true,
+      "sha256": "7a657d015c5c36af34f63842eee92973e8dc5c85ee1d209c6424b18446bf1879"
+    },
+    {
+      "id": "transit-hong-kong-hk-loop",
+      "name": "Hong Kong Loop",
+      "category": "transit",
+      "region": "Hong Kong",
+      "file": "transit/hong-kong/hk-loop.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Octopus-style dark field with looping ribbon",
+      "original_artwork": true,
+      "sha256": "9f0091ad3d3cc303f98ca4c58fef962bdd1037899e7ef640bb3a606570853fab"
+    },
+    {
+      "id": "transit-japan-tokyo-green-rail",
+      "name": "Tokyo Green Rail",
+      "category": "transit",
+      "region": "Japan",
+      "file": "transit/japan/tokyo-green-rail.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Suica-era silver/green language",
+      "original_artwork": true,
+      "sha256": "b451ba7e5e2e843c2303ef2e104fe9f6dc358f54522e080acf1338eb2f67ec4f"
+    },
+    {
+      "id": "transit-korea-seoul-black-stripe",
+      "name": "Seoul Black Stripe",
+      "category": "transit",
+      "region": "South Korea",
+      "file": "transit/korea/seoul-black-stripe.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "T-money matte black stripe language",
+      "original_artwork": true,
+      "sha256": "a36deee514eca44529c342560b284b5d84af6be70b30b85f47dde88dbaed8c21"
+    },
+    {
+      "id": "transit-france-paris-navigation-blue",
+      "name": "Paris Navigation Blue",
+      "category": "transit",
+      "region": "France",
+      "file": "transit/france/paris-navigation-blue.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Navigo blue/black language",
+      "original_artwork": true,
+      "sha256": "14feac8bd9447008d498e421753713169419f309d339e6336cec375b3f6160e8"
+    },
+    {
+      "id": "transit-usa-new-york-swipe-yellow",
+      "name": "New York Swipe Yellow",
+      "category": "transit",
+      "region": "United States",
+      "file": "transit/usa/new-york-swipe-yellow.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "MetroCard yellow/blue swipe-era language",
+      "original_artwork": true,
+      "sha256": "e745b0317b86e6b43baa3be33c2cf088ee5720d074eed9d1f1a3f252c4730494"
+    },
+    {
+      "id": "transit-australia-sydney-opal-night",
+      "name": "Sydney Opal Night",
+      "category": "transit",
+      "region": "Australia",
+      "file": "transit/australia/sydney-opal-night.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Opal charcoal + spectrum language",
+      "original_artwork": true,
+      "sha256": "672c96022ba0cc7d5fbfc2a6051397aec250e513506a0afbbb512c32fc502a25"
+    },
+    {
+      "id": "payment-singapore-lion-city-night-visa",
+      "name": "Lion City Night",
+      "category": "payment",
+      "region": "Singapore",
+      "file": "payment/singapore/lion-city-night-visa.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Visa-style city night concept",
+      "original_artwork": true,
+      "sha256": "4bbcd92a6f9999fabd82d49118450c72e98ef2911c6ccee55e946bbc3beaff1e"
+    },
+    {
+      "id": "payment-singapore-marina-jade-visa",
+      "name": "Marina Jade",
+      "category": "payment",
+      "region": "Singapore",
+      "file": "payment/singapore/marina-jade-visa.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Visa-style jade / marina concept",
+      "original_artwork": true,
+      "sha256": "fc52c5c5de0c1a552a1b03d99e6335928030ce5da20a02964202a1c269c59de4"
+    },
+    {
+      "id": "payment-uk-britannia-navy-visa",
+      "name": "Britannia Navy",
+      "category": "payment",
+      "region": "United Kingdom",
+      "file": "payment/uk/britannia-navy-visa.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Visa-style navy British geometry",
+      "original_artwork": true,
+      "sha256": "7e468af7f732d358a5c5f49582283d93b34e5d38d5c974344644c1616da07354"
+    },
+    {
+      "id": "payment-uk-london-fog-visa",
+      "name": "London Fog",
+      "category": "payment",
+      "region": "United Kingdom",
+      "file": "payment/uk/london-fog-visa.png",
+      "size": [
+        1536,
+        969
+      ],
+      "format": "png",
+      "inspired_by": "Visa-style fog / bridge concept",
+      "original_artwork": true,
+      "sha256": "4cc515d189831a030dcbedf08714de9c9c6d92b4a307aaabca3abb1e79d88416"
+    }
   ]
 }
